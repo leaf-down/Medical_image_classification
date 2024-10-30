@@ -185,8 +185,25 @@ class SS2D_with_SSD(nn.Module):
         # name.endswith("bias") in param_grouping.py
         self.dt_bias._no_weight_decay = True
 
-        self.A_logs = self.A_log_init(self.d_state, self.d_inner, copies=4, merge=True)  # (K=4, D, N)
-        self.Ds = self.D_init(self.d_inner, copies=4, merge=True)  # (K=4, D, N)
+        # Initialize log A
+        self.A_logs = self.A_log_init(A_init_range=A_init_range, nheads=self.nheads, dtype=dtype,
+                                      copies=4)  # K=4
+
+        # D "skip" parameter
+        self.Ds = self.D_init(d_ssm=self.d_ssm, D_has_hdim=self.D_has_hdim, nheads=self.nheads,
+                              copies=4)  # K=4
+
+        if self.rmsnorm:
+            assert RMSNormGated is not None
+            self.norm = RMSNormGated(self.d_ssm, eps=1e-5, norm_before_gate=self.norm_before_gate,
+                                     group_size=self.d_ssm // ngroups, **factory_kwargs)
+
+        if self.process_group is None:
+            self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
+        else:
+            self.out_proj = RowParallelLinear(self.d_inner * self.world_size, self.d_model, bias=bias,
+                                              process_group=self.process_group, sequence_parallel=self.sequence_parallel,
+                                              **factory_kwargs)
 
         # self.selective_scan = selective_scan_fn
         self.forward_core = self.forward_corev0
@@ -196,14 +213,10 @@ class SS2D_with_SSD(nn.Module):
         self.dropout = nn.Dropout(dropout) if dropout > 0. else None
 
     @staticmethod
-    def A_log_init(d_state, d_inner, copies=1, device=None, merge=True):
-        # S4D real initialization
-        A = repeat(  # 生成一个从 1 到 d_state 的序列，表示每个状态的索引
-            torch.arange(1, d_state + 1, dtype=torch.float32, device=device),
-            "n -> d n",
-            d=d_inner,  # 将序列 n 复制到 d 维度上，并设置 d=d_inner，即将该序列在每个通道上复制，使得最终生成的 A 的维度为 (d_inner, d_state)
-        ).contiguous()
-        A_log = torch.log(A)  # Keep A_log in fp32  # 每个元素的对数
+    def A_log_init(A_init_range, nheads, dtype, copies=1, device=None, merge=True):
+        assert A_init_range[0] > 0 and A_init_range[1] >= A_init_range[0]
+        A = torch.empty(nheads, dtype=torch.float32, device=device).uniform_(*A_init_range)
+        A_log = torch.log(A).to(dtype=dtype)  # Keep A_log in fp32  # 每个元素的对数
         if copies > 1:
             A_log = repeat(A_log, "d n -> r d n",
                            r=copies)  # 在新维度 r 上重复 copies 次，生成 (copies, d_inner, d_state) 的 A_log，为了在多方向扫描时为每个方向提供独立的参数初始化，使不同方向的 A_log 具有不同的初始化值。
@@ -215,9 +228,9 @@ class SS2D_with_SSD(nn.Module):
         return A_log
 
     @staticmethod
-    def D_init(d_inner, copies=1, device=None, merge=True):
+    def D_init(d_ssm, D_has_hdim, nheads, copies=1, device=None, merge=True):
         # D "skip" parameter
-        D = torch.ones(d_inner, device=device)
+        D = torch.ones(d_ssm if D_has_hdim else nheads, device=device)
         if copies > 1:
             D = repeat(D, "n1 -> r n1", r=copies)
             if merge:
