@@ -96,11 +96,24 @@
       <workItem from="1730256677233" duration="1174000" />
       <workItem from="1730258172810" duration="2992000" />
       <workItem from="1730276747481" duration="3890000" />
+      <workItem from="1730281938716" duration="579000" />
+      <workItem from="1730285223994" duration="7979000" />
     </task>
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
   </component>
   <component name="VcsManagerConfiguration">
     <option name="ADD_EXTERNAL_FILES_SILENTLY" value="true" />
