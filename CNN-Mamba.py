@@ -239,121 +239,69 @@ class SS2D_with_SSD(nn.Module):
         D._no_weight_decay = True
         return D
 
-    def forward_corev0(self, x: torch.Tensor):
-        self.selective_scan = selective_scan_fn
+    def forward(self, u: torch.Tensor, seqlen=None, seq_idx=None, cu_seqlens=None):
 
-        B, C, H, W = x.shape  # 批次数，通道数，高，宽
+        B, H, W, C = u.shape  # 批次数，通道数，高，宽
         L = H * W
         K = 4  # 四个方向上的扫描
 
+        dt_limit_kwargs = {} if self.dt_limit == (0.0, float("inf")) else dict(dt_limit=self.dt_limit)
+        zxbcdt = self.in_proj(u)
+        # 相比于mamba1，mamba2将所有的变量一起进行了投影
+        # 对于K=4的操作来说，x0和z0和z用于跳跃连接，因而不操作
+        d_mlp = (zxbcdt.shape[-1] - 2 * self.d_ssm - 2 * self.ngroups * self.d_state - self.nheads) // 2
+        # 分离时先将x0和z0和z单独分离出去，剩下的K=4操作后再分离，用括号标注了后面两项的分离
+        z0, x0, z, xBCdt = torch.split(
+            zxbcdt,
+            [d_mlp, d_mlp, self.d_ssm, (self.d_ssm + 2 * self.ngroups * self.d_state) + self.nheads],
+            dim=-1
+        )
+        xBCdt = self.act(self.conv2d(xBCdt))
+        xBCdt = xBCdt.permute(0, 3, 1, 2).contiguous()  # 调整原张量顺序(b, c, h, w)
+
         # x 展平为大小 (B, C, L)，特征图的高度和宽度转置同样展平，两种排列堆叠起来，生成一个 (B, 2, C, L) 的张量。
-        x_hwwh = torch.stack([x.view(B, -1, L), torch.transpose(x, dim0=2, dim1=3).contiguous().view(B, -1, L)],
+        xBCdt_hwwh = torch.stack([xBCdt.view(B, -1, L), torch.transpose(xBCdt, dim0=2, dim1=3).contiguous().view(B, -1, L)],
                              dim=1).view(B, 2, -1, L)  # -1这个参数是让pytorch自动推断维度的大小，确保总元素数不变
-        xs = torch.cat([x_hwwh, torch.flip(x_hwwh, dims=[-1])], dim=1)  # (b, k, d, l)  生成正向和逆向的特征排列（即翻转最后一维）最终四种组合
+        xBCdts = torch.cat([xBCdt_hwwh, torch.flip(xBCdt_hwwh, dims=[-1])], dim=1)  # (b, k, d, l)  生成正向和逆向的特征排列（即翻转最后一维）最终四种组合
+        xBCdts = xBCdts.float().view(B, -1, L)  # (b, k * d, l)，平展，匹配mamba的序列维度
+        xBCdts = xBCdts.permute(0, 2, 1)  # (b, l, k * d), 匹配mamba2的形状要求
 
-        # 将 xs 与 self.x_proj_weight 相乘。self.x_proj_weight 是一个权重矩阵，负责将输入特征 xs 投影到 dt（时间步长）、B 和 C 特征空间。
-        x_dbl = torch.einsum("b k d l, k c d -> b k c l", xs.view(B, K, -1, L), self.x_proj_weight)
-        # x_dbl = x_dbl + self.x_proj_bias.view(1, K, -1, 1)
-        # 投影结果 x_dbl 被拆分为三个部分：dts（时间步长）、Bs 和 Cs
-        dts, Bs, Cs = torch.split(x_dbl, [self.dt_rank, self.d_state, self.d_state], dim=2)
-        dts = torch.einsum("b k r l, k d r -> b k d l", dts.view(B, K, -1, L), self.dt_projs_weight)
-        # dts = dts + self.dt_projs_bias.view(1, K, -1, 1)
+        # 第二次分离
+        xBCs, dts = torch.split(xBCdts, [self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads])
+        xs, Bs, Cs = torch.split(xBCs, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
 
-        xs = xs.float().view(B, -1, L)  # (b, k * d, l)
-        dts = dts.contiguous().float().view(B, -1, L)  # (b, k * d, l)
-        Bs = Bs.float().view(B, K, -1, L)  # (b, k, d_state, l)
+        # xs
+        xs = rearrange(xs, "b l (h p) -> b l h p", p=self.headdim)
+        # As
+        As = -torch.exp(self.A_logs.float()).view(-1, self.d_state)
+        # Bs
+        Bs = rearrange(Bs, "b l (g n) -> b l g n", g=self.ngroups)
+        # Cs
+        Cs = rearrange(Cs, "b l (g n) -> b l g n", g=self.ngroups)
+        # Ds
+        Ds = rearrange(self.Ds, "(h p) -> h p", p=self.headdim) if self.D_has_hdim else self.Ds
 
-        Cs = Cs.float().view(B, K, -1, L)  # (b, k, d_state, l)
-        Ds = self.Ds.float().view(-1)  # (k * d)
-        As = -torch.exp(self.A_logs.float()).view(-1, self.d_state)  # (k * d, d_state)
-        dt_projs_bias = self.dt_projs_bias.float().view(-1)  # (k * d)
-
-        out_y = self.selective_scan(
-            xs, dts,
-            As, Bs, Cs, Ds, z=None,
-            delta_bias=dt_projs_bias,
-            delta_softplus=True,
-            return_last_state=False,
-        ).view(B, K, -1, L)
-        assert out_y.dtype == torch.float
-
-        inv_y = torch.flip(out_y[:, 2:4], dims=[-1]).view(B, 2, -1, L)
-        wh_y = torch.transpose(out_y[:, 1].view(B, -1, W, H), dim0=2, dim1=3).contiguous().view(B, -1, L)
-        invwh_y = torch.transpose(inv_y[:, 1].view(B, -1, W, H), dim0=2, dim1=3).contiguous().view(B, -1, L)
-
-        return out_y[:, 0], inv_y[:, 0], wh_y, invwh_y
-
-    # an alternative to forward_corev1
-    def forward_corev1(self, x: torch.Tensor):
-        self.selective_scan = selective_scan_fn_v1
-
-        B, C, H, W = x.shape
-        L = H * W
-        K = 4
-
-        x_hwwh = torch.stack([x.view(B, -1, L), torch.transpose(x, dim0=2, dim1=3).contiguous().view(B, -1, L)],
-                             dim=1).view(B, 2, -1, L)
-        xs = torch.cat([x_hwwh, torch.flip(x_hwwh, dims=[-1])], dim=1)  # (b, k, d, l)
-
-        x_dbl = torch.einsum("b k d l, k c d -> b k c l", xs.view(B, K, -1, L), self.x_proj_weight)
-        # x_dbl = x_dbl + self.x_proj_bias.view(1, K, -1, 1)
-        dts, Bs, Cs = torch.split(x_dbl, [self.dt_rank, self.d_state, self.d_state], dim=2)
-        dts = torch.einsum("b k r l, k d r -> b k d l", dts.view(B, K, -1, L), self.dt_projs_weight)
-        # dts = dts + self.dt_projs_bias.view(1, K, -1, 1)
-
-        xs = xs.float().view(B, -1, L)  # (b, k * d, l)
-        dts = dts.contiguous().float().view(B, -1, L)  # (b, k * d, l)
-        Bs = Bs.float().view(B, K, -1, L)  # (b, k, d_state, l)
-        Cs = Cs.float().view(B, K, -1, L)  # (b, k, d_state, l)
-        Ds = self.Ds.float().view(-1)  # (k * d)
-        As = -torch.exp(self.A_logs.float()).view(-1, self.d_state)  # (k * d, d_state)
-        dt_projs_bias = self.dt_projs_bias.float().view(-1)  # (k * d)
-
-        out_y = self.selective_scan(
-            xs, dts,
-            As, Bs, Cs, Ds,
-            delta_bias=dt_projs_bias,
-            delta_softplus=True,
-        ).view(B, K, -1, L)
-        assert out_y.dtype == torch.float
-
-        inv_y = torch.flip(out_y[:, 2:4], dims=[-1]).view(B, 2, -1, L)
-        wh_y = torch.transpose(out_y[:, 1].view(B, -1, W, H), dim0=2, dim1=3).contiguous().view(B, -1, L)
-        invwh_y = torch.transpose(inv_y[:, 1].view(B, -1, W, H), dim0=2, dim1=3).contiguous().view(B, -1, L)
-
-        return out_y[:, 0], inv_y[:, 0], wh_y, invwh_y
-
-    def forward(self, x: torch.Tensor, **kwargs):
-        B, H, W, C = x.shape
-
-        xz = self.in_proj(x)
-        x, z = xz.chunk(2, dim=-1)  # (b, h, w, d)  # 在最后一个维度（通道）上平分，一个分支mamba（x），一个分支跳跃连接（z）
-
-        x = x.permute(0, 3, 1, 2).contiguous()  # 调整原张量顺序(b, d, h, w)
-        x = self.act(self.conv2d(x))  # (b, d, h, w)
-        y1, y2, y3, y4 = self.forward_core(x)
-        assert y1.dtype == torch.float32
-        y = y1 + y2 + y3 + y4  # 四个方向上的结果相加
-        y = torch.transpose(y, dim0=1, dim1=2).contiguous().view(B, H, W, -1)  # 维度1和2对换
-        y = self.out_norm(y)
-        y = y * F.silu(z)
-        out = self.out_proj(y)
-        if self.dropout is not None:
-            out = self.dropout(out)
-        return out
+        y = mamba_chunk_scan_combined(
+            xs,
+            dts,
+            As,
+            Bs,
+            Cs,
+            chunk_size=self.chunk_size,
+            D=Ds,
+            z=None,
+            dt_bias=self.dt_bias,
+            dt_softplus=True,
+            seq_idx=seq_idx,
+            cu_seqlens=cu_seqlens,
+            **dt_limit_kwargs,
+        ).view(B, L, K, -1)  # (b, l, k, d)与xBCdts形状一致
 
 
-def channel_shuffle(x: Tensor, groups: int) -> Tensor:
-    batch_size, height, width, num_channels = x.size()
-    channels_per_group = num_channels // groups
 
-    # reshape
-    # [batch_size, num_channels, height, width] -> [batch_size, groups, channels_per_group, height, width]
-    x = x.view(batch_size, height, width, groups, channels_per_group)
 
-    x = torch.transpose(x, 3, 4).contiguous()
 
-    # flatten
-    x = x.view(batch_size, height, width, -1)
 
-    return x
+
+
+
