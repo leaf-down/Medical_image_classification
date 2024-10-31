@@ -87,7 +87,7 @@ class ConvTConvPW(nn.Module):
         return out
 
 
-class SS2D_with_SSD(nn.Module):
+class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
 
     def __init__(
             self,
@@ -144,7 +144,6 @@ class SS2D_with_SSD(nn.Module):
         self.rmsnorm = rmsnorm
         self.norm_before_gate = norm_before_gate
         self.dt_limit = dt_limit
-        self.activation = "silu"
         self.chunk_size = chunk_size
         self.use_mem_eff_path = use_mem_eff_path
         self.layer_idx = layer_idx
@@ -205,11 +204,6 @@ class SS2D_with_SSD(nn.Module):
                                               process_group=self.process_group, sequence_parallel=self.sequence_parallel,
                                               **factory_kwargs)
 
-        # self.selective_scan = selective_scan_fn
-        self.forward_core = self.forward_corev0
-
-        self.out_norm = nn.LayerNorm(self.d_inner)
-        self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)  # 输入输出前后保持通道数一致
         self.dropout = nn.Dropout(dropout) if dropout > 0. else None
 
     @staticmethod
@@ -295,7 +289,39 @@ class SS2D_with_SSD(nn.Module):
             seq_idx=seq_idx,
             cu_seqlens=cu_seqlens,
             **dt_limit_kwargs,
-        ).view(B, L, K, -1)  # (b, l, k, d)与xBCdts形状一致
+        )  # (b, l, k, d)与xBCdts形状一致
+        y = rearrange(y, "b l h p -> b l (h p)")
+        y = y.view(B, L, K, -1)  # (b, l, k, d)与xBCdts形状一致
+        assert y.dtype == torch.float
+
+        out_y = y[:, :, 0]  # 第一个方向
+        inv_y = torch.flip(y[:, :, 2:4], dims=[1]).view(B, L, 2, -1)  # 先第三和第四方向
+        wh_y = torch.transpose(y[:, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第二个方向
+        invwh_y = torch.transpose(inv_y[:, :, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第四个方向
+
+        y1 = out_y
+        y2 = inv_y[:, :, 0]
+        y3 = wh_y
+        y4 = invwh_y
+
+        out = y1 + y2 + y3 + y4
+        out = out.contiguous().view(B, H, W, -1)
+
+        if self.rmsnorm:
+            out = self.norm(out, z)
+        if d_mlp > 0:
+            out = torch.cat([F.silu(z0) * x0, out], dim=-1)
+
+        out_data = self.out_proj(out)
+        if self.dropout is not None:
+            out_data = self.dropout(out_data)
+
+        return out_data
+
+
+
+
+
 
 
 
