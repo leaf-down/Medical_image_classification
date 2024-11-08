@@ -8,7 +8,7 @@ from torchvision import transforms, datasets
 import torch.optim as optim
 from tqdm import tqdm
 
-from Medmamba_SSD import VSSM as medmamba # import model
+from Medmamba_SSD import VSSM as medmamba  # import model
 
 
 def main():
@@ -26,7 +26,7 @@ def main():
                                    transforms.ToTensor(),
                                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])}
 
-    train_dataset = datasets.ImageFolder(root="the path of your train set",
+    train_dataset = datasets.ImageFolder(root="/app/RetinalOCT_Dataset",
                                          transform=data_transform["train"])
     train_num = len(train_dataset)
 
@@ -54,7 +54,6 @@ def main():
     print("using {} images for training, {} images for validation.".format(train_num,
                                                                            val_num))
 
-
     net = medmamba(num_classes=8)
     net.to(device)
     loss_function = nn.CrossEntropyLoss()
@@ -62,7 +61,7 @@ def main():
 
     epochs = 5  # 原为100
     best_acc = 0.0
-    save_path = './{}Net.pth'.format(model_name)
+    save_path = '/app/model/{}Net.pth'.format('medmamba_ssd_')
     train_steps = len(train_loader)
     for epoch in range(epochs):
         # train
