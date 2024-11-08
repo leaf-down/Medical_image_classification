@@ -453,6 +453,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
         Bs = Bs.float().reshape(B, -1, L).permute(0, 2, 1)
         Cs = Cs.float().reshape(B, -1, L).permute(0, 2, 1)
         dts = dts.float().reshape(B, -1, L).permute(0, 2, 1)
+        dt_bias = self.dt_bias.view(-1)
 
         # xs
         xs = rearrange(xs, "b l (h p) -> b l h p", p=self.headdim)
@@ -474,7 +475,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
             chunk_size=self.chunk_size,
             D=Ds,
             z=None,
-            dt_bias=self.dt_bias,
+            dt_bias=dt_bias,
             dt_softplus=True,
             seq_idx=seq_idx,
             cu_seqlens=cu_seqlens,
@@ -486,7 +487,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
 
         out_y = y[:, :, 0]  # 第一个方向
         inv_y = torch.flip(y[:, :, 2:4], dims=[1]).view(B, L, 2, -1)  # 先第三和第四方向
-        wh_y = torch.transpose(y[:, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第二个方向
+        wh_y = torch.transpose(y[:, :, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第二个方向
         invwh_y = torch.transpose(inv_y[:, :, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第四个方向
 
         y1 = out_y

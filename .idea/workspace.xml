@@ -5,10 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/SSD_test/class_indices.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/SSD_test/Medmamba_SSD.py" beforeDir="false" afterPath="$PROJECT_DIR$/SSD_test/Medmamba_SSD.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SSD_test/train_SSD.py" beforeDir="false" afterPath="$PROJECT_DIR$/SSD_test/train_SSD.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -120,6 +118,7 @@
       <workItem from="1731035940233" duration="2233000" />
       <workItem from="1731047816581" duration="10482000" />
       <workItem from="1731068616487" duration="6870000" />
+      <workItem from="1731079207471" duration="1978000" />
     </task>
     <servers />
   </component>
