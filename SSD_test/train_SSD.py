@@ -26,7 +26,7 @@ def main():
                                    transforms.ToTensor(),
                                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])}
 
-    train_dataset = datasets.ImageFolder(root="/app/RetinalOCT_Dataset",
+    train_dataset = datasets.ImageFolder(root="/app/RetinalOCT_Dataset/train",
                                          transform=data_transform["train"])
     train_num = len(train_dataset)
 
@@ -45,7 +45,7 @@ def main():
                                                batch_size=batch_size, shuffle=True,
                                                num_workers=nw)
 
-    validate_dataset = datasets.ImageFolder(root="the path of your validation set",
+    validate_dataset = datasets.ImageFolder(root="/app/RetinalOCT_Dataset/val",
                                             transform=data_transform["val"])
     val_num = len(validate_dataset)
     validate_loader = torch.utils.data.DataLoader(validate_dataset,
@@ -59,7 +59,7 @@ def main():
     loss_function = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=0.0001)
 
-    epochs = 5  # 原为100
+    epochs = 1  # 原为100
     best_acc = 0.0
     save_path = '/app/model/{}Net.pth'.format('medmamba_ssd_')
     train_steps = len(train_loader)

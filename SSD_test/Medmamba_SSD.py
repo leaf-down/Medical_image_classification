@@ -337,7 +337,8 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
                                                 sequence_parallel=self.sequence_parallel,
                                                 **factory_kwargs)
 
-        conv_dim = self.d_ssm + 2 * self.ngroups * self.d_state
+        conv_dim = (
+                               self.d_ssm + 2 * self.ngroups * self.d_state) + self.nheads  # self.d_ssm + 2 * self.ngroups * self.d_state
         self.conv2d = nn.Conv2d(
             in_channels=conv_dim,
             out_channels=conv_dim,
@@ -379,7 +380,8 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
             self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
         else:
             self.out_proj = RowParallelLinear(self.d_inner * self.world_size, self.d_model, bias=bias,
-                                              process_group=self.process_group, sequence_parallel=self.sequence_parallel,
+                                              process_group=self.process_group,
+                                              sequence_parallel=self.sequence_parallel,
                                               **factory_kwargs)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0. else None
@@ -390,11 +392,13 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
         A = torch.empty(nheads, dtype=torch.float32, device=device).uniform_(*A_init_range)
         A_log = torch.log(A).to(dtype=dtype)  # Keep A_log in fp32  # 每个元素的对数
         if copies > 1:
-            A_log = repeat(A_log, "d n -> r d n",
-                           r=copies)  # 在新维度 r 上重复 copies 次，生成 (copies, d_inner, d_state) 的 A_log，为了在多方向扫描时为每个方向提供独立的参数初始化，使不同方向的 A_log 具有不同的初始化值。
+            A_log = repeat(A_log, "n -> r n",
+                           r=copies)  # 在新维度 r 上重复 copies 次，生成 (copies, d_inner, d_state) 的
+            # A_log，为了在多方向扫描时为每个方向提供独立的参数初始化，使不同方向的 A_log 具有不同的初始化值。
             if merge:
                 A_log = A_log.flatten(0,
-                                      1)  # 将 A_log 的前两个维度 (copies, d_inner) 合并为一个维度，使得 A_log 的形状变为 (copies * d_inner, d_state)，这种展平操作简化了后续计算，使得多方向的矩阵计算可以在同一个 A_log 中完成。
+                                      1)  # 将 A_log 的前两个维度 (copies, d_inner) 合并为一个维度，使得 A_log 的形状变为 (copies *
+                # d_inner, d_state)，这种展平操作简化了后续计算，使得多方向的矩阵计算可以在同一个 A_log 中完成。
         A_log = nn.Parameter(A_log)
         A_log._no_weight_decay = True
         return A_log
@@ -428,24 +432,32 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
             [d_mlp, d_mlp, self.d_ssm, (self.d_ssm + 2 * self.ngroups * self.d_state) + self.nheads],
             dim=-1
         )
-        xBCdt = self.act(self.conv2d(xBCdt))
+
         xBCdt = xBCdt.permute(0, 3, 1, 2).contiguous()  # 调整原张量顺序(b, c, h, w)
+        xBCdt = self.act(self.conv2d(xBCdt))
 
         # x 展平为大小 (B, C, L)，特征图的高度和宽度转置同样展平，两种排列堆叠起来，生成一个 (B, 2, C, L) 的张量。
-        xBCdt_hwwh = torch.stack([xBCdt.view(B, -1, L), torch.transpose(xBCdt, dim0=2, dim1=3).contiguous().view(B, -1, L)],
-                             dim=1).view(B, 2, -1, L)  # -1这个参数是让pytorch自动推断维度的大小，确保总元素数不变
-        xBCdts = torch.cat([xBCdt_hwwh, torch.flip(xBCdt_hwwh, dims=[-1])], dim=1)  # (b, k, d, l)  生成正向和逆向的特征排列（即翻转最后一维）最终四种组合
-        xBCdts = xBCdts.float().view(B, -1, L)  # (b, k * d, l)，平展，匹配mamba的序列维度
-        xBCdts = xBCdts.permute(0, 2, 1)  # (b, l, k * d), 匹配mamba2的形状要求
+        xBCdt_hwwh = torch.stack(
+            [xBCdt.view(B, -1, L), torch.transpose(xBCdt, dim0=2, dim1=3).contiguous().view(B, -1, L)],
+            dim=1).view(B, 2, -1, L)  # -1这个参数是让pytorch自动推断维度的大小，确保总元素数不变
+        xBCdts = torch.cat([xBCdt_hwwh, torch.flip(xBCdt_hwwh, dims=[-1])],
+                           dim=1)  # (b, k, d, l)  生成正向和逆向的特征排列（即翻转最后一维）最终四种组合
 
         # 第二次分离
-        xBCs, dts = torch.split(xBCdts, [self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads])
-        xs, Bs, Cs = torch.split(xBCs, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
+        xBCs, dts = torch.split(xBCdts, [self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads], dim=2)
+        xs, Bs, Cs = torch.split(xBCs, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=2)
+
+        # (b, k * d, l)，平展，匹配mamba的序列维度
+        # (b, l, k * d), 匹配mamba2的形状要求
+        xs = xs.float().reshape(B, -1, L).permute(0, 2, 1)
+        Bs = Bs.float().reshape(B, -1, L).permute(0, 2, 1)
+        Cs = Cs.float().reshape(B, -1, L).permute(0, 2, 1)
+        dts = dts.float().reshape(B, -1, L).permute(0, 2, 1)
 
         # xs
         xs = rearrange(xs, "b l (h p) -> b l h p", p=self.headdim)
         # As
-        As = -torch.exp(self.A_logs.float()).view(-1, self.d_state)
+        As = -torch.exp(self.A_logs.float())
         # Bs
         Bs = rearrange(Bs, "b l (g n) -> b l g n", g=self.ngroups)
         # Cs
@@ -520,7 +532,7 @@ class SS_Conv_SSD(nn.Module, PyTorchModelHubMixin):
             drop_path: float = 0,
             norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
             attn_drop_rate: float = 0,
-            d_state: int = 16,
+            d_state: int = 64,
             **kwargs,
     ):
         super().__init__()
@@ -574,7 +586,7 @@ class VSSLayer(nn.Module, PyTorchModelHubMixin):
             norm_layer=nn.LayerNorm,
             downsample=None,
             use_checkpoint=False,
-            d_state=16,
+            d_state=64,
             **kwargs,
     ):
         super().__init__()
@@ -682,9 +694,10 @@ class VSSLayer_up(nn.Module):
         return x
 
 
-class VSSM(nn.Module):
+class VSSM(nn.Module, PyTorchModelHubMixin):
     def __init__(self, patch_size=4, in_chans=3, num_classes=1000, depths=[2, 2, 4, 2], depths_decoder=[2, 9, 2, 2],
-                 dims=[96, 192, 384, 768], dims_decoder=[768, 384, 192, 96], d_state=16, drop_rate=0.,
+                 dims=[128, 256, 512, 1024], dims_decoder=[1024, 512, 256, 128],  # 原为[96, 192, 384, 768]
+                 d_state=16, drop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, patch_norm=True,
                  use_checkpoint=False, **kwargs):
