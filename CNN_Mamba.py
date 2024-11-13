@@ -270,8 +270,6 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
             dt_rank="auto",
             dt_min=0.001,
             dt_max=0.1,
-            dt_init="random",
-            dt_scale=1.0,
             dt_init_floor=1e-4,
             dt_limit=(0.0, float("inf")),
             dropout=0.,
