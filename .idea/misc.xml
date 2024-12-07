@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="deep_learing_study" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.11 (python_study)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="deep_learing_study" project-jdk-type="Python SDK" />
 </project>
