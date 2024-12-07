@@ -27,7 +27,7 @@ def B_batch(x, grid, k=0, extend=True, device='cpu'):
 
     Example
     -------
-    >>> from o_kan import B_batch
+    >>> from medmamba_kan.o_kan import B_batch
     >>> x = torch.rand(100,2)
     >>> grid = torch.linspace(-1,1,steps=11)[None, :].expand(2, 11)
     >>> B_batch(x, grid, k=3).shape
@@ -237,7 +237,7 @@ class KANLayer(nn.Module):
 
         Example
         -------
-        >>> from o_kan import *
+        >>> from medmamba_kan.o_kan import *
         >>> model = KANLayer(in_dim=3, out_dim=5)
         >>> (model.in_dim, model.out_dim)
         """
@@ -298,7 +298,7 @@ class KANLayer(nn.Module):
 
         Example
         -------
-        >>> from o_kan import *
+        >>> from medmamba_kan.o_kan import *
         >>> model = KANLayer(in_dim=3, out_dim=5)
         >>> x = torch.normal(0,1,size=(100,3))
         >>> y, preacts, postacts, postspline = model(x)
@@ -467,7 +467,7 @@ class KANLayer(nn.Module):
 
         Example
         -------
-        >>> from o_kan import *
+        >>> from medmamba_kan.o_kan import *
         >>> model = KANLayer(in_dim=2, out_dim=2, num=5, k=3)
         >>> print(model.coef)
         >>> model.swap(0,1,mode='in')
