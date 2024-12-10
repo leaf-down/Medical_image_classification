@@ -267,11 +267,120 @@ class Final_PatchExpand2D(nn.Module):
         return x
 
 
+class STL(nn.Module):
+    def __init__(self,
+                 p,
+                 in_channel):
+        super().__init__()
+        self.p = p  # 控制可学习的变换矩阵的大小
+        self.in_channel = in_channel
+
+        # 两个可学习的变换矩阵
+        self.learnable_u1 = nn.Parameter(torch.rand(self.in_channel, self.p ** 2))
+        self.learnable_u2 = nn.Parameter(torch.rand(self.in_channel, self.in_channel))
+
+        self.conv1d = nn.Conv1d(in_channel=2, out_channel=1, kernel_size=1)
+        self.sigmoid = nn.Sigmoid()
+
+    @staticmethod
+    def maxpool(x: torch.Tensor) -> torch.Tensor:
+        max, ind = x.max(dim=1)
+        return max
+
+    @staticmethod
+    def avgpool(x: torch.Tensor) -> torch.Tensor:
+        return x.mean(dim=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, L, C = x.shape
+
+        # 特征图平展
+        s = x.permute(0, 2, 1).contiguous()  # 调整原张量顺序(b, c, l)
+
+        # 平均和最大池化
+        s_max = self.maxpool(s)
+        s_avg = self.avgpool(s)
+
+        # 权重图m
+        m = torch.cat([s_max, s_avg], dim=1)
+        m = self.conv1d(m)
+        m = self.sigmoid(m)
+
+        # 带权重特征图
+        weighted_features_m = m * s  # (B, C, L)
+        weighted_features_m = weighted_features_m.permute(0, 2, 1).contiguous()  # (B, L, C)
+
+        # 语义令牌
+        A = torch.matmul(weighted_features_m, self.learnable_u1)  # (B, L, C)@(C, P) = (B, L, P)
+        A = F.softmax(A, dim=2)
+        A = A.permute(0, 2, 1).contiguous()  # (B, P, L)
+        V = torch.matmul(weighted_features_m, self.learnable_u2)  # (B, L, C)@(C, C) = (B, L, C)
+        U = torch.bmm(A, V)  # (B, P, L)@(B, L, C) = (B, P, C)
+
+        return U
+
+
+class STF(nn.Module):
+    def __init__(self,
+                 p,
+                 in_channel):
+        super().__init__()
+        self.p = p
+        self.in_channel = in_channel
+        self.learnable_z = nn.Parameter(torch.rand(self.in_channel, self.p ** 2))
+
+        self.conv1d = nn.Conv1d(in_channel=2, out_channel=1, kernel_size=1)
+        self.sigmoid = nn.Sigmoid()
+        self.silu = nn.SiLU()
+        self.adaptivepool = nn.AdaptiveAvgPool2d((self.in_channel, self.p))
+
+    @staticmethod
+    def maxpool(x: torch.Tensor) -> torch.Tensor:
+        max, ind = x.max(dim=1)
+        return max
+
+    @staticmethod
+    def avgpool(x: torch.Tensor) -> torch.Tensor:
+        return x.mean(dim=1)
+
+    def forward(self, z: torch.Tensor, U: torch.Tensor) -> torch.Tensor:
+        B, L, C = z.shape  # 批次数，通道数，高，宽
+
+        # 原始图平展
+        z = z.permute(0, 2, 1).contiguous()  # 调整原张量顺序(b, c, l)
+
+        pooled_features_z = self.silu(self.adaptivepool(z))  # (b, c, p)
+
+        # 平均和最大池化
+        z_max = self.maxpool(pooled_features_z)
+        z_avg = self.avgpool(pooled_features_z)
+
+        # 权重图m
+        m = torch.cat([z_max, z_avg], dim=1)
+        m = self.conv1d(m)
+        m = self.sigmoid(m)
+
+        # 带权重特征图
+        weighted_features_m = m * pooled_features_z  # (B, C, P)
+        weighted_features_m = weighted_features_m.permute(0, 2, 1).contiguous()  # (B, P, C)
+
+        Z = torch.matmul(pooled_features_z.permute(0, 2, 1).contiguous(),
+                         self.learnable_z)  # (B, P, C)@(C, P) = (B, P, P)
+        Z = self.sigmoid(Z)
+
+        hidden_features_u = torch.bmm(Z, U)  # (B, P, P)@(B, P, C) = (B, P, C)
+
+        output_features_u = weighted_features_m + hidden_features_u
+
+        return output_features_u
+
+
 class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
 
     def __init__(
             self,
             d_model,  # 通道数
+            p,
             d_state=128,
             # d_state="auto", # 20240109
             d_conv=3,  # 卷积核大小
@@ -304,6 +413,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
+        self.p = p
         self.d_model = d_model
         self.d_state = d_state
         # self.d_state = math.ceil(self.d_model / 6) if d_state == "auto" else d_model # 20240109
@@ -340,7 +450,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
                                                 **factory_kwargs)
 
         conv_dim = (
-                               self.d_ssm + 2 * self.ngroups * self.d_state) + self.nheads  # self.d_ssm + 2 * self.ngroups * self.d_state
+                           self.d_ssm + 2 * self.ngroups * self.d_state) + self.nheads  # self.d_ssm + 2 * self.ngroups * self.d_state
         self.conv2d = nn.Conv2d(
             in_channels=conv_dim,
             out_channels=conv_dim,
@@ -388,6 +498,14 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
 
         self.dropout = nn.Dropout(dropout) if dropout > 0. else None
 
+        self.stl = STL(p=self.p,
+                       in_channel=self.d_model)
+        self.stf = STF(p=self.p,
+                       in_channel=self.d_model)
+        self.o_norm = nn.BatchNorm2d(self.d_model)
+        self.o_linear = nn.Conv2d(self.d_model, self.d_model, kernel_size=1)
+        self.adaptivepool = nn.AdaptiveAvgPool2d((self.d_model, self.p))
+
     @staticmethod
     def A_log_init(A_init_range, nheads, dtype, copies=1, device=None, merge=True):
         assert A_init_range[0] > 0 and A_init_range[1] >= A_init_range[0]
@@ -416,6 +534,22 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
         D = nn.Parameter(D)  # Keep in fp32
         D._no_weight_decay = True
         return D
+
+    def WMF(self, *o):
+        # Normalize weights to ensure they sum to 1
+        k_weights = torch.softmax(self.k_weights, dim=0)
+
+        # Check if the number of outputs matches the number of weights
+        assert len(o) == len(k_weights), "The number of outputs and weights must match."
+
+        # Weighted sum of outputs
+        O = sum(w * out for w, out in zip(k_weights, o))
+        # Average over features
+        if O.dim() == 3:
+            O_mean = torch.mean(O, dim=1)
+        else:
+            O_mean = O
+        return O_mean
 
     def forward(self, u: torch.Tensor, seqlen=None, seq_idx=None, cu_seqlens=None):
 
@@ -492,10 +626,33 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
         wh_y = torch.transpose(y[:, :, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第二个方向
         invwh_y = torch.transpose(inv_y[:, :, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第四个方向
 
+        # (B, L, C)
         y1 = out_y
         y2 = inv_y[:, :, 0]
         y3 = wh_y
         y4 = invwh_y
+
+        semantic_tokens_u1 = self.stl(y1)
+        semantic_tokens_u2 = self.stl(y2)
+        semantic_tokens_u3 = self.stl(y3)
+        semantic_tokens_u4 = self.stl(y4)
+
+        original_feature_z = self.o_linear(self.o_norm(u.permute(0, 3, 1, 2).contiguous()))  # (b,c,w,h)
+        original_feature_z = original_feature_z.view(B, -1, L)  # (b,c,l)
+
+        # (B, P, C)
+        output_feature_u1 = self.stf(z=original_feature_z, U=semantic_tokens_u1)
+        output_feature_u2 = self.stf(z=original_feature_z, U=semantic_tokens_u2)
+        output_feature_u3 = self.stf(z=original_feature_z, U=semantic_tokens_u3)
+        output_feature_u4 = self.stf(z=original_feature_z, U=semantic_tokens_u4)
+
+
+
+
+
+
+
+
 
         out = y1 + y2 + y3 + y4
         out = out.contiguous().view(B, H, W, -1)
@@ -510,117 +667,6 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
             out_data = self.dropout(out_data)
 
         return out_data
-
-
-class STL(nn.Module):
-    def __init__(self,
-                 p,
-                 in_channel):
-        super().__init__()
-        self.p = p  # 控制可学习的变换矩阵的大小
-        self.in_channel = in_channel
-
-        # 两个可学习的变换矩阵
-        self.learnable_u1 = nn.parameters(torch.rand(self.in_channel, self.p**2))
-        self.learnable_u2 = nn.parameters(torch.rand(self.in_channel, self.in_channel))
-
-        self.conv1d = nn.Conv1d(in_channel=2, out_channel=1, kernel_size=1)
-        self.sigmoid = nn.Sigmoid()
-
-
-    @ staticmethod
-    def maxpool(x: torch.Tensor) -> torch.Tensor:
-        return x.max(dim=1)
-
-    @ staticmethod
-    def avgpool(x: torch.Tensor) -> torch.Tensor:
-        return x.mean(dim=1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, H, W, C = x.shape  # 批次数，通道数，高，宽
-        L = H * W
-
-        # 特征图平展
-        x = x.permute(0, 3, 1, 2).contiguous()  # 调整原张量顺序(b, c, h, w)
-        s = x.view(B, -1, L)
-
-        # 平均和最大池化
-        s_max = self.maxpool(s)
-        s_avg = self.avgpool(s)
-
-        # 权重图m
-        m = torch.cat([s_max, s_avg], dim=1)
-        m = self.conv1d(m)
-        m = self.sigmoid(m)
-
-        # 带权重特征图
-        weighted_features_m = m * s  # (B, C, L)
-        weighted_features_m = weighted_features_m.permute(0, 2, 1).contiguous()  # (B, L, C)
-
-        # 语义令牌
-        A = torch.matmul(weighted_features_m, self.learnable_u1)  # (B, L, C)@(C, P) = (B, L, P)
-        A = F.softmax(A, dim=2)
-        A = A.permute(0, 2, 1).contiguous()  # (B, P, L)
-        V = torch.matmul(weighted_features_m, self.learnable_u2)  # (B, L, C)@(C, C) = (B, L, C)
-        U = torch.bmm(A, V)  # (B, P, L)@(B, L, C) = (B, P, C)
-
-        return U
-
-
-class STF(nn.Module):
-    def __init__(self,
-                 p,
-                 in_channel):
-        super().__init__()
-        self.p = p
-        self.in_channel = in_channel
-        self.learnable_z = nn.parameters(torch.rand(self.in_channel, self.p**2))
-
-        self.conv1d = nn.Conv1d(in_channel=2, out_channel=1, kernel_size=1)
-        self.sigmoid = nn.Sigmoid()
-        self.silu = nn.SiLU()
-        self.adaptivepool = nn.AdaptiveAvgPool2d((self.in_channel, self.p))
-
-
-    @staticmethod
-    def maxpool(x: torch.Tensor) -> torch.Tensor:
-        return x.max(dim=1)
-
-    @staticmethod
-    def avgpool(x: torch.Tensor) -> torch.Tensor:
-        return x.mean(dim=1)
-
-    def forward(self, z: torch.Tensor, U: torch.Tensor) -> torch.Tensor:
-        B, H, W, C = z.shape  # 批次数，通道数，高，宽
-        L = H * W
-
-        # 原始图平展
-        z = z.permute(0, 3, 1, 2).contiguous()  # 调整原张量顺序(b, c, h, w)
-        z = z.view(B, -1, L)  # (b, c, l)
-
-        pooled_features_z = self.silu(self.adaptivepool(z))  # (b, c, p)
-
-        # 平均和最大池化
-        z_max = self.maxpool(pooled_features_z)
-        z_avg = self.avgpool(pooled_features_z)
-
-        # 权重图m
-        m = torch.cat([z_max, z_avg], dim=1)
-        m = self.conv1d(m)
-        m = self.sigmoid(m)
-
-        # 带权重特征图
-        weighted_features_m = m * pooled_features_z  # (B, C, P)
-        weighted_features_m = weighted_features_m.permute(0, 2, 1).contiguous()  # (B, P, C)
-
-        Z = torch.matmul(pooled_features_z.permute(0, 2, 1).contiguous(), self.learnable_z)  # (B, P, C)@(C, P) = (B, P, P)
-        Z = self.sigmoid(Z)
-
-        hidden_features_u = torch.bmm(Z, U)  # (B, P, P)@(B, P, C) = (B, P, C)
-
-        output_features_u = weighted_features_m + hidden_features_u
-
-        return output_features_u
 
 
 def channel_shuffle(x: Tensor, groups: int) -> Tensor:
