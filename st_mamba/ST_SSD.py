@@ -380,7 +380,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
     def __init__(
             self,
             d_model,  # 通道数
-            p,
+            p=224,
             d_state=128,
             # d_state="auto", # 20240109
             d_conv=3,  # 卷积核大小
@@ -646,15 +646,9 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
         output_feature_u3 = self.stf(z=original_feature_z, U=semantic_tokens_u3)
         output_feature_u4 = self.stf(z=original_feature_z, U=semantic_tokens_u4)
 
+        out = self.WMF(output_feature_u1, output_feature_u2, output_feature_u3, output_feature_u4)
 
-
-
-
-
-
-
-
-        out = y1 + y2 + y3 + y4
+        #    out = y1 + y2 + y3 + y4
         out = out.contiguous().view(B, H, W, -1)
 
         if self.rmsnorm:

@@ -5,6 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/Medical_image_classification.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/Medical_image_classification.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/st_mamba/ST_SSD.py" beforeDir="false" afterPath="$PROJECT_DIR$/st_mamba/ST_SSD.py" afterDir="false" />
     </list>
@@ -90,8 +92,8 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-js-predefined-1d06a55b98c1-74d2a5396914-JavaScript-PY-241.14494.241" />
-        <option value="bundled-python-sdk-0509580d9d50-28c9f5db9ffe-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-241.14494.241" />
+        <option value="bundled-js-predefined-d6986cc7102b-5c90d61e3bab-JavaScript-PY-242.23726.102" />
+        <option value="bundled-python-sdk-5e1850174b45-399fe30bd8c1-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-242.23726.102" />
       </set>
     </attachedChunks>
   </component>
@@ -139,6 +141,8 @@
       <workItem from="1733814405278" duration="3694000" />
       <workItem from="1733818907199" duration="4949000" />
       <workItem from="1733833781471" duration="5170000" />
+      <workItem from="1733879064874" duration="1210000" />
+      <workItem from="1733880703275" duration="331000" />
     </task>
     <servers />
   </component>
