@@ -10,8 +10,6 @@ from typing import Callable
 
 from einops import rearrange, repeat
 
-from test import out_features
-
 try:
     from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
 except ImportError:
@@ -273,23 +271,24 @@ class STL(nn.Module):
                  in_channel):
         super().__init__()
         self.p = p  # 控制可学习的变换矩阵的大小
-        self.in_channel = in_channel
+        self.in_channel = in_channel * 2  # 通道数要乘2，由于后面调用时传入的通道数都被除2了
 
         # 两个可学习的变换矩阵
         self.learnable_u1 = nn.Parameter(torch.rand(self.in_channel, self.p ** 2))
         self.learnable_u2 = nn.Parameter(torch.rand(self.in_channel, self.in_channel))
 
-        self.conv1d = nn.Conv1d(in_channel=2, out_channel=1, kernel_size=1)
+        self.conv1d = nn.Conv1d(in_channels=2, out_channels=1, kernel_size=1)
         self.sigmoid = nn.Sigmoid()
 
     @staticmethod
     def maxpool(x: torch.Tensor) -> torch.Tensor:
-        max, ind = x.max(dim=1)
-        return max
+        max, ind = x.max(dim=1)  # 此处max形状为(b, l)
+        return max.unsqueeze(1)  # 将max形状变为(b, 1, l)
 
     @staticmethod
     def avgpool(x: torch.Tensor) -> torch.Tensor:
-        return x.mean(dim=1)
+        mean = x.mean(dim=1)  # 此处mean形状为(b, l)
+        return mean.unsqueeze(1)  # 将mean形状变为(b, 1, l)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, L, C = x.shape
@@ -326,22 +325,23 @@ class STF(nn.Module):
                  in_channel):
         super().__init__()
         self.p = p
-        self.in_channel = in_channel
+        self.in_channel = in_channel * 2  # 通道数要乘2，由于后面调用时传入的通道数都被除2了
         self.learnable_z = nn.Parameter(torch.rand(self.in_channel, self.p ** 2))
 
-        self.conv1d = nn.Conv1d(in_channel=2, out_channel=1, kernel_size=1)
+        self.conv1d = nn.Conv1d(in_channels=2, out_channels=1, kernel_size=1)
         self.sigmoid = nn.Sigmoid()
         self.silu = nn.SiLU()
-        self.adaptivepool = nn.AdaptiveAvgPool2d((self.in_channel, self.p))
+        self.adaptivepool = nn.AdaptiveAvgPool2d((self.in_channel, self.p ** 2))
 
     @staticmethod
     def maxpool(x: torch.Tensor) -> torch.Tensor:
-        max, ind = x.max(dim=1)
-        return max
+        max, ind = x.max(dim=1)  # 此处max形状为(b, l)
+        return max.unsqueeze(1)  # 将max形状变为(b, 1, l)
 
     @staticmethod
     def avgpool(x: torch.Tensor) -> torch.Tensor:
-        return x.mean(dim=1)
+        mean = x.mean(dim=1)  # 此处mean形状为(b, l)
+        return mean.unsqueeze(1)  # 将mean形状变为(b, 1, l)
 
     def forward(self, z: torch.Tensor, U: torch.Tensor) -> torch.Tensor:
         B, L, C = z.shape  # 批次数，通道数，高，宽
@@ -380,7 +380,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
     def __init__(
             self,
             d_model,  # 通道数
-            p=224,
+            p,
             d_state=128,
             # d_state="auto", # 20240109
             d_conv=3,  # 卷积核大小
@@ -505,6 +505,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
         self.o_norm = nn.BatchNorm2d(self.d_model)
         self.o_linear = nn.Conv2d(self.d_model, self.d_model, kernel_size=1)
         self.adaptivepool = nn.AdaptiveAvgPool2d((self.d_model, self.p))
+        self.k_weights = nn.Parameter(torch.ones(4) / 4, requires_grad=True)
 
     @staticmethod
     def A_log_init(A_init_range, nheads, dtype, copies=1, device=None, merge=True):
@@ -544,12 +545,8 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
 
         # Weighted sum of outputs
         O = sum(w * out for w, out in zip(k_weights, o))
-        # Average over features
-        if O.dim() == 3:
-            O_mean = torch.mean(O, dim=1)
-        else:
-            O_mean = O
-        return O_mean
+
+        return O
 
     def forward(self, u: torch.Tensor, seqlen=None, seq_idx=None, cu_seqlens=None):
 
@@ -648,7 +645,6 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
 
         out = self.WMF(output_feature_u1, output_feature_u2, output_feature_u3, output_feature_u4)
 
-        #    out = y1 + y2 + y3 + y4
         out = out.contiguous().view(B, H, W, -1)
 
         if self.rmsnorm:
@@ -682,6 +678,7 @@ def channel_shuffle(x: Tensor, groups: int) -> Tensor:
 class SS_Conv_SSD(nn.Module, PyTorchModelHubMixin):
     def __init__(
             self,
+            p,
             hidden_dim: int = 0,
             drop_path: float = 0,
             norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
@@ -691,7 +688,7 @@ class SS_Conv_SSD(nn.Module, PyTorchModelHubMixin):
     ):
         super().__init__()
         self.ln_1 = norm_layer(hidden_dim // 2)
-        self.self_attention = SS2D_with_SSD(d_model=hidden_dim // 2, dropout=attn_drop_rate, d_state=d_state, **kwargs)
+        self.self_attention = SS2D_with_SSD(d_model=hidden_dim // 2, p=p, dropout=attn_drop_rate, d_state=d_state, **kwargs)
         self.drop_path = DropPath(drop_path)
 
         self.conv33conv33conv11 = nn.Sequential(
@@ -735,6 +732,7 @@ class VSSLayer(nn.Module, PyTorchModelHubMixin):
             self,
             dim,
             depth,
+            p,
             attn_drop=0.,
             drop_path=0.,
             norm_layer=nn.LayerNorm,
@@ -749,6 +747,7 @@ class VSSLayer(nn.Module, PyTorchModelHubMixin):
 
         self.blocks = nn.ModuleList([
             SS_Conv_SSD(
+                p=p,
                 hidden_dim=dim,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 norm_layer=norm_layer,
@@ -801,6 +800,7 @@ class VSSLayer_up(nn.Module):
             self,
             dim,
             depth,
+            p,
             attn_drop=0.,
             drop_path=0.,
             norm_layer=nn.LayerNorm,
@@ -815,6 +815,7 @@ class VSSLayer_up(nn.Module):
 
         self.blocks = nn.ModuleList([
             SS_Conv_SSD(
+                p=p,
                 hidden_dim=dim,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 norm_layer=norm_layer,
@@ -851,6 +852,7 @@ class VSSLayer_up(nn.Module):
 class VSSM(nn.Module, PyTorchModelHubMixin):
     def __init__(self, patch_size=4, in_chans=3, num_classes=1000, depths=[2, 2, 4, 2], depths_decoder=[2, 9, 2, 2],
                  dims=[128, 256, 512, 1024], dims_decoder=[1024, 512, 256, 128],  # 原为[96, 192, 384, 768]
+                 ps=[56, 28, 14, 7],
                  d_state=16, drop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, patch_norm=True,
@@ -885,6 +887,7 @@ class VSSM(nn.Module, PyTorchModelHubMixin):
             layer = VSSLayer(
                 dim=dims[i_layer],
                 depth=depths[i_layer],
+                p=ps[i_layer],
                 d_state=math.ceil(dims[0] / 6) if d_state is None else d_state,  # 20240109
                 drop=drop_rate,
                 attn_drop=attn_drop_rate,
