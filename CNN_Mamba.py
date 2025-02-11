@@ -799,6 +799,7 @@ class VSSM(nn.Module, PyTorchModelHubMixin):
         # self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.conv_T_conv = ConvTConvPW(in_channels=in_chans)
 
         self.apply(self._init_weights)
         for m in self.modules():
