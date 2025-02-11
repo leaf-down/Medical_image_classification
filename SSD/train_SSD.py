@@ -61,7 +61,7 @@ def main():
 
     epochs = 1  # 原为100
     best_acc = 0.0
-    save_path = '/app/model/{}Net.pth'.format('medmamba_ssd_')
+    save_path = '/app/models/{}Net.pth'.format('medmamba_ssd_')
     train_steps = len(train_loader)
     for epoch in range(epochs):
         # train
