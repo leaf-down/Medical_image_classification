@@ -5,12 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/class_indices.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/Medical_image_classification.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/Medical_image_classification.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SSD/train_SSD.py" beforeDir="false" afterPath="$PROJECT_DIR$/SSD/train_SSD.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/train.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/medmamba_kan/train.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/st_mamba/train.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -146,7 +142,7 @@
       <workItem from="1739240805965" duration="175000" />
       <workItem from="1739240995373" duration="511000" />
       <workItem from="1739261496862" duration="1454000" />
-      <workItem from="1739263519750" duration="1754000" />
+      <workItem from="1739263519750" duration="2168000" />
     </task>
     <servers />
   </component>
