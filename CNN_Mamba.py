@@ -123,11 +123,52 @@ def flops_selective_scan_ref(B=1, L=256, D=768, N=16, with_D=True, with_Z=False,
     assert not with_complex
 
     flops = 0  # below code flops = 0
+    if False:
+        ...
+        """
+        dtype_in = u.dtype
+        u = u.float()
+        delta = delta.float()
+        if delta_bias is not None:
+            delta = delta + delta_bias[..., None].float()
+        if delta_softplus:
+            delta = F.softplus(delta)
+        batch, dim, dstate = u.shape[0], A.shape[0], A.shape[1]
+        is_variable_B = B.dim() >= 3
+        is_variable_C = C.dim() >= 3
+        if A.is_complex():
+            if is_variable_B:
+                B = torch.view_as_complex(rearrange(B.float(), "... (L two) -> ... L two", two=2))
+            if is_variable_C:
+                C = torch.view_as_complex(rearrange(C.float(), "... (L two) -> ... L two", two=2))
+        else:
+            B = B.float()
+            C = C.float()
+        x = A.new_zeros((batch, dim, dstate))
+        ys = []
+        """
+
     flops += get_flops_einsum([[B, D, L], [D, N]], "bdl,dn->bdln")
     if with_Group:
         flops += get_flops_einsum([[B, D, L], [B, N, L], [B, D, L]], "bdl,bnl,bdl->bdln")
     else:
         flops += get_flops_einsum([[B, D, L], [B, D, N, L], [B, D, L]], "bdl,bdnl,bdl->bdln")
+    if False:
+        ...
+        """
+        deltaA = torch.exp(torch.einsum('bdl,dn->bdln', delta, A))
+        if not is_variable_B:
+            deltaB_u = torch.einsum('bdl,dn,bdl->bdln', delta, B, u)
+        else:
+            if B.dim() == 3:
+                deltaB_u = torch.einsum('bdl,bnl,bdl->bdln', delta, B, u)
+            else:
+                B = repeat(B, "B G N L -> B (G H) N L", H=dim // B.shape[1])
+                deltaB_u = torch.einsum('bdl,bdnl,bdl->bdln', delta, B, u)
+        if is_variable_C and C.dim() == 4:
+            C = repeat(C, "B G N L -> B (G H) N L", H=dim // C.shape[1])
+        last_state = None
+        """
 
     in_for_flops = B * D * N
     if with_Group:
@@ -135,11 +176,38 @@ def flops_selective_scan_ref(B=1, L=256, D=768, N=16, with_D=True, with_Z=False,
     else:
         in_for_flops += get_flops_einsum([[B, D, N], [B, N]], "bdn,bn->bd")
     flops += L * in_for_flops
+    if False:
+        ...
+        """
+        for i in range(u.shape[2]):
+            x = deltaA[:, :, i] * x + deltaB_u[:, :, i]
+            if not is_variable_C:
+                y = torch.einsum('bdn,dn->bd', x, C)
+            else:
+                if C.dim() == 3:
+                    y = torch.einsum('bdn,bn->bd', x, C[:, :, i])
+                else:
+                    y = torch.einsum('bdn,bdn->bd', x, C[:, :, :, i])
+            if i == u.shape[2] - 1:
+                last_state = x
+            if y.is_complex():
+                y = y.real * 2
+            ys.append(y)
+        y = torch.stack(ys, dim=2) # (batch dim L)
+        """
 
     if with_D:
         flops += B * D * L
     if with_Z:
         flops += B * D * L
+    if False:
+        ...
+        """
+        out = y if D is None else y + u * rearrange(D, "d -> d 1")
+        if z is not None:
+            out = out * F.silu(z)
+        out = out.to(dtype=dtype_in)
+        """
 
     return flops
 
@@ -270,6 +338,8 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
             dt_rank="auto",
             dt_min=0.001,
             dt_max=0.1,
+            dt_init="random",
+            dt_scale=1.0,
             dt_init_floor=1e-4,
             dt_limit=(0.0, float("inf")),
             dropout=0.,
@@ -321,7 +391,8 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
                                                 sequence_parallel=self.sequence_parallel,
                                                 **factory_kwargs)
 
-        conv_dim = self.d_ssm + 2 * self.ngroups * self.d_state
+        conv_dim = (
+                               self.d_ssm + 2 * self.ngroups * self.d_state) + self.nheads  # self.d_ssm + 2 * self.ngroups * self.d_state
         self.conv2d = nn.Conv2d(
             in_channels=conv_dim,
             out_channels=conv_dim,
@@ -363,7 +434,8 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
             self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
         else:
             self.out_proj = RowParallelLinear(self.d_inner * self.world_size, self.d_model, bias=bias,
-                                              process_group=self.process_group, sequence_parallel=self.sequence_parallel,
+                                              process_group=self.process_group,
+                                              sequence_parallel=self.sequence_parallel,
                                               **factory_kwargs)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0. else None
@@ -374,11 +446,13 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
         A = torch.empty(nheads, dtype=torch.float32, device=device).uniform_(*A_init_range)
         A_log = torch.log(A).to(dtype=dtype)  # Keep A_log in fp32  # 每个元素的对数
         if copies > 1:
-            A_log = repeat(A_log, "d n -> r d n",
-                           r=copies)  # 在新维度 r 上重复 copies 次，生成 (copies, d_inner, d_state) 的 A_log，为了在多方向扫描时为每个方向提供独立的参数初始化，使不同方向的 A_log 具有不同的初始化值。
+            A_log = repeat(A_log, "n -> r n",
+                           r=copies)  # 在新维度 r 上重复 copies 次，生成 (copies, d_inner, d_state) 的
+            # A_log，为了在多方向扫描时为每个方向提供独立的参数初始化，使不同方向的 A_log 具有不同的初始化值。
             if merge:
                 A_log = A_log.flatten(0,
-                                      1)  # 将 A_log 的前两个维度 (copies, d_inner) 合并为一个维度，使得 A_log 的形状变为 (copies * d_inner, d_state)，这种展平操作简化了后续计算，使得多方向的矩阵计算可以在同一个 A_log 中完成。
+                                      1)  # 将 A_log 的前两个维度 (copies, d_inner) 合并为一个维度，使得 A_log 的形状变为 (copies *
+                # d_inner, d_state)，这种展平操作简化了后续计算，使得多方向的矩阵计算可以在同一个 A_log 中完成。
         A_log = nn.Parameter(A_log)
         A_log._no_weight_decay = True
         return A_log
@@ -412,24 +486,33 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
             [d_mlp, d_mlp, self.d_ssm, (self.d_ssm + 2 * self.ngroups * self.d_state) + self.nheads],
             dim=-1
         )
-        xBCdt = self.act(self.conv2d(xBCdt))
+
         xBCdt = xBCdt.permute(0, 3, 1, 2).contiguous()  # 调整原张量顺序(b, c, h, w)
+        xBCdt = self.act(self.conv2d(xBCdt))
 
         # x 展平为大小 (B, C, L)，特征图的高度和宽度转置同样展平，两种排列堆叠起来，生成一个 (B, 2, C, L) 的张量。
-        xBCdt_hwwh = torch.stack([xBCdt.view(B, -1, L), torch.transpose(xBCdt, dim0=2, dim1=3).contiguous().view(B, -1, L)],
-                             dim=1).view(B, 2, -1, L)  # -1这个参数是让pytorch自动推断维度的大小，确保总元素数不变
-        xBCdts = torch.cat([xBCdt_hwwh, torch.flip(xBCdt_hwwh, dims=[-1])], dim=1)  # (b, k, d, l)  生成正向和逆向的特征排列（即翻转最后一维）最终四种组合
-        xBCdts = xBCdts.float().view(B, -1, L)  # (b, k * d, l)，平展，匹配mamba的序列维度
-        xBCdts = xBCdts.permute(0, 2, 1)  # (b, l, k * d), 匹配mamba2的形状要求
+        xBCdt_hwwh = torch.stack(
+            [xBCdt.view(B, -1, L), torch.transpose(xBCdt, dim0=2, dim1=3).contiguous().view(B, -1, L)],
+            dim=1).view(B, 2, -1, L)  # -1这个参数是让pytorch自动推断维度的大小，确保总元素数不变
+        xBCdts = torch.cat([xBCdt_hwwh, torch.flip(xBCdt_hwwh, dims=[-1])],
+                           dim=1)  # (b, k, d, l)  生成正向和逆向的特征排列（即翻转最后一维）最终四种组合
 
         # 第二次分离
-        xBCs, dts = torch.split(xBCdts, [self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads])
-        xs, Bs, Cs = torch.split(xBCs, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
+        xBCs, dts = torch.split(xBCdts, [self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads], dim=2)
+        xs, Bs, Cs = torch.split(xBCs, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=2)
+
+        # (b, k * d, l)，平展，匹配mamba的序列维度
+        # (b, l, k * d), 匹配mamba2的形状要求
+        xs = xs.float().reshape(B, -1, L).permute(0, 2, 1)
+        Bs = Bs.float().reshape(B, -1, L).permute(0, 2, 1)
+        Cs = Cs.float().reshape(B, -1, L).permute(0, 2, 1)
+        dts = dts.float().reshape(B, -1, L).permute(0, 2, 1)
+        dt_bias = self.dt_bias.view(-1)
 
         # xs
         xs = rearrange(xs, "b l (h p) -> b l h p", p=self.headdim)
         # As
-        As = -torch.exp(self.A_logs.float()).view(-1, self.d_state)
+        As = -torch.exp(self.A_logs.float())
         # Bs
         Bs = rearrange(Bs, "b l (g n) -> b l g n", g=self.ngroups)
         # Cs
@@ -446,7 +529,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
             chunk_size=self.chunk_size,
             D=Ds,
             z=None,
-            dt_bias=self.dt_bias,
+            dt_bias=dt_bias,
             dt_softplus=True,
             seq_idx=seq_idx,
             cu_seqlens=cu_seqlens,
@@ -458,7 +541,7 @@ class SS2D_with_SSD(nn.Module, PyTorchModelHubMixin):
 
         out_y = y[:, :, 0]  # 第一个方向
         inv_y = torch.flip(y[:, :, 2:4], dims=[1]).view(B, L, 2, -1)  # 先第三和第四方向
-        wh_y = torch.transpose(y[:, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第二个方向
+        wh_y = torch.transpose(y[:, :, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第二个方向
         invwh_y = torch.transpose(inv_y[:, :, 1].view(B, W, H, -1), dim0=1, dim1=2).contiguous().view(B, L, -1)  # 第四个方向
 
         y1 = out_y
@@ -504,7 +587,7 @@ class SS_Conv_SSD(nn.Module, PyTorchModelHubMixin):
             drop_path: float = 0,
             norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
             attn_drop_rate: float = 0,
-            d_state: int = 16,
+            d_state: int = 64,
             **kwargs,
     ):
         super().__init__()
@@ -536,7 +619,7 @@ class SS_Conv_SSD(nn.Module, PyTorchModelHubMixin):
         return output + input
 
 
-class VSSLayer(nn.Module):
+class VSSLayer(nn.Module, PyTorchModelHubMixin):
     """ A basic Swin Transformer layer for one stage.
     Args:
         dim (int): Number of input channels.
@@ -558,7 +641,7 @@ class VSSLayer(nn.Module):
             norm_layer=nn.LayerNorm,
             downsample=None,
             use_checkpoint=False,
-            d_state=16,
+            d_state=64,
             **kwargs,
     ):
         super().__init__()
@@ -666,9 +749,9 @@ class VSSLayer_up(nn.Module):
         return x
 
 
-class VSSM(nn.Module):
+class VSSM(nn.Module, PyTorchModelHubMixin):
     def __init__(self, patch_size=4, in_chans=3, num_classes=1000, depths=[2, 2, 4, 2], depths_decoder=[2, 9, 2, 2],
-                 dims=[128, 256, 512, 1024], dims_decoder=[1024, 512, 256, 128],  # 原为[96, 192, 384, 768],
+                 dims=[128, 256, 512, 1024], dims_decoder=[1024, 512, 256, 128],  # 原为[96, 192, 384, 768]
                  d_state=16, drop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, patch_norm=True,
@@ -681,8 +764,6 @@ class VSSM(nn.Module):
         self.embed_dim = dims[0]
         self.num_features = dims[-1]
         self.dims = dims
-
-        self.conv_T_conv = ConvTConvPW(in_channels=3)
 
         self.patch_embed = PatchEmbed2D(patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
                                         norm_layer=norm_layer if patch_norm else None)
@@ -726,11 +807,10 @@ class VSSM(nn.Module):
 
     def _init_weights(self, m: nn.Module):
         """
-        out_proj.weight which is previously initilized in SS_Conv_SSM, would be cleared in nn.Linear
+        out_proj.weight which is previously initilized in SS_Conv_SSD, would be cleared in nn.Linear
         no fc.weight found in the any of the model parameters
         no nn.Embedding found in the any of the model parameters
-        so the thing is, SS_Conv_SSM initialization is useless
-
+        so the thing is, SS_Conv_SSD initialization is useless
 
         Conv2D is not intialized !!!
         """
