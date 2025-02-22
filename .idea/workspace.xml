@@ -5,10 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/st_mamba/class_indices.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/st_mamba/ST_SSD.py" beforeDir="false" afterPath="$PROJECT_DIR$/st_mamba/ST_SSD.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/st_mamba/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/st_mamba/train.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" afterPath="$PROJECT_DIR$/test.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -147,6 +145,10 @@
       <workItem from="1739263519750" duration="2168000" />
       <workItem from="1739278963387" duration="3699000" />
       <workItem from="1739282836037" duration="4427000" />
+      <workItem from="1739500804433" duration="624000" />
+      <workItem from="1740060674008" duration="20000" />
+      <workItem from="1740060772239" duration="70000" />
+      <workItem from="1740190446522" duration="1457000" />
     </task>
     <servers />
   </component>
