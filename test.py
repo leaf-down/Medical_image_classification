@@ -1,26 +1,22 @@
 import os
 import sys
-import numpy as np
 import torch
-import pandas as pd
 from tqdm import tqdm
-import shutil
 
 from torchvision import transforms, datasets
 from torch.utils.data import Dataset, DataLoader
-from datetime import datetime
-from torch.nn import functional as F
-from PIL import Image
+
 # 自己改模型导入
 from MedMamba import VSSM as medmamba  # import model
 
 # path
 dataset_dir = "/app/RetinalOCT_Dataset/test"
-model_path = "/app/models"
+model_path = "/app/models/MedmambaNet.pth"
 
 # data preprocessing
 batch_size = 32
 nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
+print('Using {} dataloader workers every process'.format(nw))
 transform = transforms.Compose([
     transforms.Grayscale(num_output_channels=3),  # Convert grayscale images to 3 channels
     transforms.Resize((224, 224)),  # Resize shorter side to 256, keeping aspect ratio
@@ -33,6 +29,7 @@ test_loader = torch.utils.data.DataLoader(test_dataset,
                                           batch_size=batch_size, shuffle=False,
                                           num_workers=nw)
 test_num = len(test_dataset)
+print("using {} images for test.".format(test_num))
 
 # Set device
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

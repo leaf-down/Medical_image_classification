@@ -8,7 +8,7 @@ from torchvision import transforms, datasets
 import torch.optim as optim
 from tqdm import tqdm
 
-from MedSSD_ekan import VSSM as medmamba  # import model
+from MedSSD_okan import VSSM as medmamba  # import model
 
 
 def main():

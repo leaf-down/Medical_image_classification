@@ -5,7 +5,12 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="">
+      <change afterPath="$PROJECT_DIR$/MedMamba.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/medmamba_kan/MedSSD_okan.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/medmamba_kan/class_indices.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/medmamba_kan/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/medmamba_kan/train.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/st_mamba/class_indices.json" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" afterPath="$PROJECT_DIR$/test.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -67,7 +72,7 @@
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;main&quot;,
     &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;D:/Code/Medical_image_classification_based_on_active_deep_learning/Medical_image_classification&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/Code/Python/python_study_in_LZU&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
@@ -149,6 +154,15 @@
       <workItem from="1740060674008" duration="20000" />
       <workItem from="1740060772239" duration="70000" />
       <workItem from="1740190446522" duration="1457000" />
+      <workItem from="1740391722894" duration="1586000" />
+      <workItem from="1740447568931" duration="2139000" />
+      <workItem from="1740451418864" duration="377000" />
+      <workItem from="1740625751297" duration="369000" />
+      <workItem from="1740626201201" duration="1025000" />
+      <workItem from="1740999751627" duration="839000" />
+      <workItem from="1741007139831" duration="1235000" />
+      <workItem from="1741008724672" duration="1444000" />
+      <workItem from="1741010239079" duration="79000" />
     </task>
     <servers />
   </component>
