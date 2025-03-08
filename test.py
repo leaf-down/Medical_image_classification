@@ -7,11 +7,11 @@ from torchvision import transforms, datasets
 from torch.utils.data import Dataset, DataLoader
 
 # 自己改模型导入
-from MedMamba import VSSM as medmamba  # import model
+from medmamba_kan.MedSSD_okan import VSSM as medmamba  # import model
 
 # path
 dataset_dir = "/app/RetinalOCT_Dataset/test"
-model_path = "/app/models/MedmambaNet.pth"
+model_path = "/app/models/ssd_Okan_Net.pth"
 
 # data preprocessing
 batch_size = 32

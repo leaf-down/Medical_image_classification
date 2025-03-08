@@ -8,7 +8,7 @@ from torchvision import transforms, datasets
 import torch.optim as optim
 from tqdm import tqdm
 
-from MedSSD import VSSM as medmamba  # import model
+from MedSSD_kan import VSSM as medmamba  # import model
 
 
 def main():
@@ -26,7 +26,7 @@ def main():
                                    transforms.ToTensor(),
                                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])}
 
-    train_dataset = datasets.ImageFolder(root="/app/RetinalOCT_Dataset/train",
+    train_dataset = datasets.ImageFolder(root="/app/RetinalOCT_Dataset/start_data",
                                          transform=data_transform["train"])
     train_num = len(train_dataset)
 
@@ -37,7 +37,7 @@ def main():
     with open('class_indices.json', 'w') as json_file:
         json_file.write(json_str)
 
-    batch_size = 32
+    batch_size = 4
     nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
     print('Using {} dataloader workers every process'.format(nw))
 
@@ -61,7 +61,7 @@ def main():
 
     epochs = 1  # 原为100
     best_acc = 0.0
-    save_path = '/app/models/{}Net.pth'.format('medmamba_ssd_')
+    save_path = '/app/models/{}Net.pth'.format('ssd_2kan_')
     train_steps = len(train_loader)
     for epoch in range(epochs):
         # train

@@ -5,12 +5,13 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/MedMamba.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/medmamba_kan/MedSSD_okan.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/MedSSD_kan/MedSSD_kan.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/MedSSD_kan/train.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/medmamba_kan/MedSSD_kan.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/test_all_index.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/medmamba_kan/class_indices.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/medmamba_kan/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/medmamba_kan/train.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/st_mamba/class_indices.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/SSD/Medmamba_SSD.py" beforeDir="false" afterPath="$PROJECT_DIR$/SSD/MedSSD.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SSD/train_SSD.py" beforeDir="false" afterPath="$PROJECT_DIR$/SSD/train_SSD.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" afterPath="$PROJECT_DIR$/test.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -72,7 +73,7 @@
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;main&quot;,
     &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;D:/Code/Python/python_study_in_LZU&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/Code/Medical_image_classification_based_on_active_deep_learning/Medical_image_classification/medmamba_kan&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
@@ -84,6 +85,8 @@
 }</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
+      <recent name="D:\Code\Medical_image_classification_based_on_active_deep_learning\Medical_image_classification\medmamba_kan" />
+      <recent name="D:\Code\Medical_image_classification_based_on_active_deep_learning\Medical_image_classification\MedSSD_2kan" />
       <recent name="D:\Code\Python\Medical_image_classification\st_mamba" />
       <recent name="D:\Code\Python\Medical_image_classification\medmamba_kan" />
     </key>
@@ -163,6 +166,12 @@
       <workItem from="1741007139831" duration="1235000" />
       <workItem from="1741008724672" duration="1444000" />
       <workItem from="1741010239079" duration="79000" />
+      <workItem from="1741088481578" duration="6093000" />
+      <workItem from="1741168712910" duration="365000" />
+      <workItem from="1741227365551" duration="9732000" />
+      <workItem from="1741263163504" duration="4850000" />
+      <workItem from="1741347343221" duration="1164000" />
+      <workItem from="1741404028887" duration="96000" />
     </task>
     <servers />
   </component>
