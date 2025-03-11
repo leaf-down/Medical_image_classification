@@ -5,14 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/MedSSD_kan/MedSSD_kan.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/MedSSD_kan/train.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/medmamba_kan/MedSSD_kan.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/test_all_index.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SSD/Medmamba_SSD.py" beforeDir="false" afterPath="$PROJECT_DIR$/SSD/MedSSD.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SSD/train_SSD.py" beforeDir="false" afterPath="$PROJECT_DIR$/SSD/train_SSD.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" afterPath="$PROJECT_DIR$/test.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/MedSSD_kan/MedSSD_kan.py" beforeDir="false" afterPath="$PROJECT_DIR$/MedSSD_kan/MedSSD_kan.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -172,6 +166,9 @@
       <workItem from="1741263163504" duration="4850000" />
       <workItem from="1741347343221" duration="1164000" />
       <workItem from="1741404028887" duration="96000" />
+      <workItem from="1741497336656" duration="731000" />
+      <workItem from="1741523384501" duration="1857000" />
+      <workItem from="1741705224454" duration="502000" />
     </task>
     <servers />
   </component>

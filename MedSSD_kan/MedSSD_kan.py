@@ -1136,7 +1136,7 @@ class VSSM(nn.Module, PyTorchModelHubMixin):
                              sb_trainable=True, save_plot_data=True, device='cpu', sparse_init=False
                              )
 
-        self.kan2 = KANLayer(in_dim=self.num_features, out_dim=self.num_features,
+        self.kan2 = KANLayer(in_dim=self.num_features, out_dim=num_classes,
                              num=7,
                              k=5,
                              noise_scale=0.5,
@@ -1211,7 +1211,6 @@ class VSSM(nn.Module, PyTorchModelHubMixin):
         x = torch.flatten(x, start_dim=1)
         if update_grid:
             self.kan.update_grid(x)
-        k1 = self.kan1(x)
-        k2 = self.kan2(k1[0])
-        x = self.kan3(k2[0])
+        k = self.kan1(x)
+        x = self.kan2(k[0])
         return x[0]
