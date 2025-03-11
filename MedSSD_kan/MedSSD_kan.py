@@ -472,6 +472,37 @@ class KANLayer(nn.Module):
             swap_(self.mask.data, i1, i2, mode=mode)
 
 
+class KansModule(nn.Module, PyTorchModelHubMixin):
+    def __init__(self, in_channels, out_channels,
+                 num1=5, num2=7, num3=5,
+                 k1=3, k2=5, k3=3):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.num1 = num1
+        self.num2 = num2
+        self.num3 = num3
+        self.k1 = k1
+        self.k2 = k2
+        self.k3 = k3
+
+        self.kan1 = KANLayer(in_dim=self.in_channels, out_dim=self.in_channels, num=self.num1, k=self.k1)
+        self.kan2 = KANLayer(in_dim=self.in_channels, out_dim=self.in_channels, num=self.num2, k=self.k2)
+        self.kan3 = KANLayer(in_dim=self.in_channels, out_dim=self.out_channels, num=self.num3, k=self.k3)
+        self.bn = nn.BatchNorm1d(self.in_channels)
+
+    def forward(self, x):
+        residual = x
+        x = self.kan1(x)
+        x = self.bn(x[0])
+        x = self.kan2(x)
+        x = self.bn(x[0])
+        out = x + residual
+        out = self.kan3(out)
+        return out[0]
+
+
+
 def flops_selective_scan_ref(B=1, L=256, D=768, N=16, with_D=True, with_Z=False, with_Group=True, with_complex=False):
     """
     u: r(B D L)
@@ -1122,47 +1153,7 @@ class VSSM(nn.Module, PyTorchModelHubMixin):
 
         # self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.kan1 = KANLayer(in_dim=self.num_features, out_dim=self.num_features,
-                             num=5,
-                             k=3,
-                             noise_scale=0.5,
-                             scale_base_mu=0.0,
-                             scale_base_sigma=1.0,
-                             scale_sp=1.0,
-                             base_fun=torch.nn.SiLU(),
-                             grid_eps=0.02,
-                             grid_range=[-1, 1],
-                             sp_trainable=True,
-                             sb_trainable=True, save_plot_data=True, device='cpu', sparse_init=False
-                             )
-
-        self.kan2 = KANLayer(in_dim=self.num_features, out_dim=num_classes,
-                             num=7,
-                             k=5,
-                             noise_scale=0.5,
-                             scale_base_mu=0.0,
-                             scale_base_sigma=1.0,
-                             scale_sp=1.0,
-                             base_fun=torch.nn.SiLU(),
-                             grid_eps=0.02,
-                             grid_range=[-1, 1],
-                             sp_trainable=True,
-                             sb_trainable=True, save_plot_data=True, device='cpu', sparse_init=False
-                             )
-
-        self.kan3 = KANLayer(in_dim=self.num_features, out_dim=num_classes,
-                             num=5,
-                             k=3,
-                             noise_scale=0.5,
-                             scale_base_mu=0.0,
-                             scale_base_sigma=1.0,
-                             scale_sp=1.0,
-                             base_fun=torch.nn.SiLU(),
-                             grid_eps=0.02,
-                             grid_range=[-1, 1],
-                             sp_trainable=True,
-                             sb_trainable=True, save_plot_data=True, device='cpu', sparse_init=False
-                             )
+        self.kans = KansModule(in_channels=self.num_features, out_channels=self.num_classes)
 
         self.apply(self._init_weights)
         for m in self.modules():
@@ -1209,8 +1200,6 @@ class VSSM(nn.Module, PyTorchModelHubMixin):
         x = x.permute(0, 3, 1, 2)
         x = self.avgpool(x)
         x = torch.flatten(x, start_dim=1)
-        if update_grid:
-            self.kan.update_grid(x)
-        k = self.kan1(x)
-        x = self.kan2(k[0])
-        return x[0]
+        out = self.kans(x)
+
+        return out
