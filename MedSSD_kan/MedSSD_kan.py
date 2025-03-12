@@ -474,8 +474,6 @@ class KANLayer(nn.Module):
 
 class KansModule(nn.Module, PyTorchModelHubMixin):
     def __init__(self, in_channels, out_channels,
-                 num1=5, num2=7, num3=5,
-                 k1=3, k2=5, k3=3):
                  num1=5, num2=5, num3=5,
                  k1=3, k2=3, k3=3):
         super().__init__()
