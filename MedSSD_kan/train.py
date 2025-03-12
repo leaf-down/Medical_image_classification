@@ -26,7 +26,7 @@ def main():
                                    transforms.ToTensor(),
                                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])}
 
-    train_dataset = datasets.ImageFolder(root="/app/RetinalOCT_Dataset/start_data",
+    train_dataset = datasets.ImageFolder(root="/app/RetinalOCT_Dataset/train",
                                          transform=data_transform["train"])
     train_num = len(train_dataset)
 
@@ -37,7 +37,7 @@ def main():
     with open('class_indices.json', 'w') as json_file:
         json_file.write(json_str)
 
-    batch_size = 4
+    batch_size = 32
     nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
     print('Using {} dataloader workers every process'.format(nw))
 

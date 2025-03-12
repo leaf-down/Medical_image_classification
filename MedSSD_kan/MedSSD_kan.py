@@ -487,18 +487,17 @@ class KansModule(nn.Module, PyTorchModelHubMixin):
         self.k3 = k3
 
         self.kan1 = KANLayer(in_dim=self.in_channels, out_dim=self.in_channels, num=self.num1, k=self.k1)
-        self.kan2 = KANLayer(in_dim=self.in_channels, out_dim=self.in_channels, num=self.num2, k=self.k2)
-        self.kan3 = KANLayer(in_dim=self.in_channels, out_dim=self.out_channels, num=self.num3, k=self.k3)
+        self.kan2 = KANLayer(in_dim=self.in_channels, out_dim=self.out_channels, num=self.num2, k=self.k2)
+        # self.kan3 = KANLayer(in_dim=self.in_channels, out_dim=self.out_channels, num=self.num3, k=self.k3)
         self.bn = nn.BatchNorm1d(self.in_channels)
 
     def forward(self, x):
         residual = x
         x = self.kan1(x)
         x = self.bn(x[0])
-        x = self.kan2(x)
-        x = self.bn(x[0])
         out = x + residual
-        out = self.kan3(out)
+        out = self.kan2(out)
+
         return out[0]
 
 
