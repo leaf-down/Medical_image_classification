@@ -4,7 +4,14 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
+<<<<<<< HEAD
     <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="" />
+=======
+    <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/MedSSD_kan/MedSSD_kan.py" beforeDir="false" afterPath="$PROJECT_DIR$/MedSSD_kan/MedSSD_kan.py" afterDir="false" />
+    </list>
+>>>>>>> 5d8696605040bdf39ba481422c37685c4cf1db79
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -90,8 +97,8 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-js-predefined-1d06a55b98c1-74d2a5396914-JavaScript-PY-241.14494.241" />
-        <option value="bundled-python-sdk-0509580d9d50-28c9f5db9ffe-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-241.14494.241" />
+        <option value="bundled-js-predefined-d6986cc7102b-76f8388c3a79-JavaScript-PY-243.24978.54" />
+        <option value="bundled-python-sdk-91e3b7efe1d4-466328ff949b-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-243.24978.54" />
       </set>
     </attachedChunks>
   </component>
@@ -171,7 +178,11 @@
       <workItem from="1741739865589" duration="45000" />
       <workItem from="1741739923359" duration="752000" />
       <workItem from="1741741628523" duration="857000" />
+<<<<<<< HEAD
       <workItem from="1741744872916" duration="238000" />
+=======
+      <workItem from="1741747389080" duration="1084000" />
+>>>>>>> 5d8696605040bdf39ba481422c37685c4cf1db79
     </task>
     <servers />
   </component>
