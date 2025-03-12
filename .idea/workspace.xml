@@ -4,12 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/MedSSD_kan/class_indices.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/MedSSD_kan/MedSSD_kan.py" beforeDir="false" afterPath="$PROJECT_DIR$/MedSSD_kan/MedSSD_kan.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/MedSSD_kan/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/MedSSD_kan/train.py" afterDir="false" />
-    </list>
+    <list default="true" id="d65e665e-b3e3-4426-b574-a8a40c57407c" name="更改" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -176,6 +171,7 @@
       <workItem from="1741739865589" duration="45000" />
       <workItem from="1741739923359" duration="752000" />
       <workItem from="1741741628523" duration="857000" />
+      <workItem from="1741744872916" duration="238000" />
     </task>
     <servers />
   </component>
