@@ -8,11 +8,12 @@ from torchvision import transforms, datasets
 from torch.utils.data import Dataset, DataLoader
 
 # 自己改模型导入
-from medmamba_kan.MedSSD_okan import VSSM as medmamba  # import model
+from MedSSD_kan.MedSSD_kan import VSSM as medmamba  # import model
 
 # path
 dataset_dir = "/app/RetinalOCT_Dataset/test"
-model_path = "/app/models/ssd_Okan_Net.pth"
+model_path = "/app/models/"
+model_name = "ssd_2kan_Net_retinal.pth"
 
 # data preprocessing
 batch_size = 32
@@ -35,7 +36,7 @@ print("using {} device.".format(device))
 
 # Load model
 model = medmamba(num_classes=8)  # num_classes is the number of classes the model needs to classify
-model.load_state_dict(torch.load(model_path))
+model.load_state_dict(torch.load(model_path+model_name))
 model = model.to(device)
 
 # Test
@@ -73,7 +74,7 @@ param_size = sum(p.numel() for p in model.parameters())
 
 # Save results
 results = pd.DataFrame({
-    'Model': ['ssd_Okan_Net'],
+    'Model': [model_name],
     'Dataset': ['RetinalOCT_Dataset'],
     'Accuracy': [accuracy],
     'Precision': [precision],
@@ -84,6 +85,6 @@ results = pd.DataFrame({
     'Parameter Size': [param_size]
 })
 
-filename = f"/app/models/csv/evaluation_ssd_Okan_Net_RetinalOCT_Dataset.csv"
+filename = "/app/models/csv/evaluation_{}_RetinalOCT_Dataset.csv".format(model_name)
 results.to_csv(filename, index=False)
 print(f"Results saved to {filename}")
