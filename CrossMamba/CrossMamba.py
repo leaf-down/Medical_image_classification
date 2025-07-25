@@ -668,6 +668,7 @@ class SS_Conv_SSD(nn.Module, PyTorchModelHubMixin):
         output = channel_shuffle(output, groups=2)
         return output + input
 
+
 # --------------------- Embedding and Downsampling Module ----------------------
 
 
@@ -695,6 +696,8 @@ class PatchEmbed2D(nn.Module):
         if self.norm is not None:
             x = self.norm(x)
         return x
+
+
 class PatchMerging2D(nn.Module):
     r""" Patch Merging Layer.
     Args:
@@ -736,5 +739,3 @@ class PatchMerging2D(nn.Module):
         x = self.reduction(x)
 
         return x
-
-
