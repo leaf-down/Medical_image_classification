@@ -1,3 +1,9 @@
+# =============================================================================
+# Name: CrossMamba1
+# Description: 实现了crossmamba.drawio文件中第一幅总体结构图
+# Calling Attention:
+# =============================================================================
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -701,7 +707,6 @@ class PatchEmbed2D(nn.Module):
 class PatchMerging2D(nn.Module):
     r""" Patch Merging Layer.
     Args:
-        input_resolution (tuple[int]): Resolution of input feature.
         dim (int): Number of input channels.
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
@@ -738,4 +743,210 @@ class PatchMerging2D(nn.Module):
         x = self.norm(x)
         x = self.reduction(x)
 
+        return x
+
+
+# --------------------- Overall Structure ----------------------
+class FELayer(nn.Module, PyTorchModelHubMixin):
+    """ A basic Swin Transformer layer for one stage.
+    Args:
+        dim (int): Number of input channels.
+        depth (int): Number of blocks.
+        drop (float, optional): Dropout rate. Default: 0.0
+        attn_drop (float, optional): Attention dropout rate. Default: 0.0
+        drop_path (float | tuple[float], optional): Stochastic depth rate. Default: 0.0
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
+        downsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
+    """
+
+    def __init__(
+            self,
+            dim,
+            depth,
+            attn_drop=0.,
+            drop_path=0.,
+            norm_layer=nn.LayerNorm,
+            downsample=None,
+            use_checkpoint=False,
+            d_state=64,
+            **kwargs,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.use_checkpoint = use_checkpoint
+
+        self.blocks = nn.ModuleList([
+            SS_Conv_SSD(
+                hidden_dim=dim,
+                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                norm_layer=norm_layer,
+                attn_drop_rate=attn_drop,
+                d_state=d_state,
+            )
+            for i in range(depth)])
+
+        if True:  # is this really applied? Yes, but been overriden later in VSSM!
+            def _init_weights(module: nn.Module):
+                for name, p in module.named_parameters():
+                    if name in ["out_proj.weight"]:
+                        p = p.clone().detach_()  # fake init, just to keep the seed ....
+                        nn.init.kaiming_uniform_(p, a=math.sqrt(5))
+
+            self.apply(_init_weights)
+
+        if downsample is not None:
+            self.downsample = downsample(dim=dim, norm_layer=norm_layer)
+        else:
+            self.downsample = None
+
+    def forward(self, x):
+        for blk in self.blocks:
+            if self.use_checkpoint:
+                x = checkpoint.checkpoint(blk, x)
+            else:
+                x = blk(x)
+
+        if self.downsample is not None:
+            x = self.downsample(x)
+
+        return x
+
+
+class VFEFM(nn.Module, PyTorchModelHubMixin):
+    def __init__(self, patch_size=4, in_chans=3, num_classes=1000,
+                 depths=[2, 2, 4, 2],
+                 dims=[128, 256, 512, 1024],  # 原为[96, 192, 384, 768]
+                 d_state=128, drop_rate=0.,
+                 attn_drop_rate=0., drop_path_rate=0.1,
+                 norm_layer=nn.LayerNorm, patch_norm=True,
+                 use_checkpoint=False, **kwargs):
+        super().__init__()
+        self.num_classes = num_classes
+        self.num_layers = len(depths)
+        if isinstance(dims, int):
+            dims = [int(dims * 2 ** i_layer) for i_layer in range(self.num_layers)]
+        self.embed_dim = dims[0]
+        self.num_features = dims[-1]
+        self.dims = dims
+
+        self.patch_embed = PatchEmbed2D(patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
+                                        norm_layer=norm_layer if patch_norm else None)
+
+        # WASTED absolute position embedding ======================
+        self.ape = False
+        # self.ape = False
+        # drop_rate = 0.0
+        if self.ape:
+            self.patches_resolution = self.patch_embed.patches_resolution
+            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, *self.patches_resolution, self.embed_dim))
+            trunc_normal_(self.absolute_pos_embed, std=.02)
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
+
+        self.layers1 = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            layer = FELayer(
+                dim=dims[i_layer],
+                depth=depths[i_layer],
+                d_state=math.ceil(dims[0] / 6) if d_state is None else d_state,  # 20240109
+                drop=drop_rate,
+                attn_drop=attn_drop_rate,
+                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                norm_layer=norm_layer,
+                downsample=PatchMerging2D if (i_layer < self.num_layers - 2) else None,  # 原为只有最后一层不含下采样
+                use_checkpoint=use_checkpoint,
+            )
+            self.layers1.append(layer)
+
+        self.layers2 = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            layer = FELayer(
+                dim=dims[i_layer],
+                depth=depths[i_layer],
+                d_state=math.ceil(dims[0] / 6) if d_state is None else d_state,  # 20240109
+                drop=drop_rate,
+                attn_drop=attn_drop_rate,
+                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                norm_layer=norm_layer,
+                downsample=PatchMerging2D if (i_layer < self.num_layers - 2) else None,
+                use_checkpoint=use_checkpoint,
+            )
+            self.layers2.append(layer)
+
+        self.fusion = CrossMamba(d_model=dims[-2],
+                                 dropout=attn_drop_rate)
+
+        self.downsample = PatchMerging2D(dim=dims[2], norm_layer=norm_layer)
+
+        # self.norm = norm_layer(self.num_features)
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+
+        #  模型常规参数初始化
+        self.apply(self._init_weights)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+    def _init_weights(self, m: nn.Module):
+        """
+        out_proj.weight which is previously initilized in SS_Conv_SSD, would be cleared in nn.Linear
+        no fc.weight found in the any of the model parameters
+        no nn.Embedding found in the any of the model parameters
+        so the thing is, SS_Conv_SSD initialization is useless
+
+        Conv2D is not intialized !!!
+        """
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'absolute_pos_embed'}
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {'relative_position_bias_table'}
+
+    def forward_backbone(self, x1, x2):
+        x1 = self.patch_embed(x1)
+        if self.ape:
+            x1 = x1 + self.absolute_pos_embed
+        x1 = self.pos_drop(x1)
+
+        x2 = self.patch_embed(x2)
+        if self.ape:
+            x2 = x2 + self.absolute_pos_embed
+        x2 = self.pos_drop(x2)
+
+        for layer in self.layers1[:3]:
+            x1 = layer(x1)
+        for layer in self.layers2[:3]:
+            x2 = layer(x2)
+
+        x1_f, x2_f = self.fusion(x1, x2, x2, x1)
+
+        x1_f = self.downsample(x1_f)  # 第三层移出了下采样，将下采样放置到融合后
+        x2_f = self.downsample(x2_f)
+
+        x1_f = self.layers1[-1](x1_f)
+        x2_f = self.layers2[-1](x2_f)
+
+        x = x1_f + x2_f
+
+        return x
+
+    def forward(self, x1, x2):
+        x = self.forward_backbone(x1, x2)
+        x = x.permute(0, 3, 1, 2)
+        x = self.avgpool(x)
+        x = torch.flatten(x, start_dim=1)
+        x = self.head(x)
         return x
