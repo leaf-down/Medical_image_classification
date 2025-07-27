@@ -124,8 +124,7 @@ class CrossMamba(nn.Module, PyTorchModelHubMixin):
         d_BCdts_in_proj = 2 * self.ngroups * self.d_state + self.nheads
         self.BCdts_in_proj = nn.Linear(self.d_model, d_BCdts_in_proj, bias=bias, **factory_kwargs)  # 输入维度未确定，后续更改
 
-        conv_dim = (
-                           self.d_ssm + 2 * self.ngroups * self.d_state) + self.nheads  # self.d_ssm + 2 * self.ngroups * self.d_state
+        conv_dim = (self.d_ssm + 2 * self.ngroups * self.d_state) + self.nheads  # self.d_ssm + 2 * self.ngroups * self.d_state
         self.conv2d = nn.Conv2d(
             in_channels=conv_dim,
             out_channels=conv_dim,
@@ -224,7 +223,7 @@ class CrossMamba(nn.Module, PyTorchModelHubMixin):
         return D
 
     def forward(self, u1: torch.Tensor, u2: torch.Tensor,
-                u1_cat_u2: torch.Tensor, u2_cat_u1: torch.Tensor,
+                u2_cat_u1: torch.Tensor, u1_cat_u2: torch.Tensor,  # u2_cat_u1给u1用，u1_cat_u2给u2用，不要弄混
                 seq_idx=None, cu_seqlens=None):
 
         B, H, W, C = u1.shape  # 批次数，通道数，高，宽
@@ -254,8 +253,8 @@ class CrossMamba(nn.Module, PyTorchModelHubMixin):
         xs2 = self.act(self.xs_conv2d(xs2))
 
         # 内容感知相关参数的输入映射
-        BCdts1 = self.BCdts_in_proj(u1_cat_u2)
-        BCdts2 = self.BCdts_in_proj(u2_cat_u1)
+        BCdts1 = self.BCdts_in_proj(u2_cat_u1)
+        BCdts2 = self.BCdts_in_proj(u1_cat_u2)
         BCdts1 = BCdts1.permute(0, 3, 1, 2).contiguous()  # 调整原张量顺序(b, c, h, w)
         BCdts2 = BCdts2.permute(0, 3, 1, 2).contiguous()
         BCdts1 = self.act(self.BCdts_conv2d(BCdts1))  # 卷积+激活
@@ -820,7 +819,9 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
                  d_state=128, drop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, patch_norm=True,
-                 use_checkpoint=False, **kwargs):
+                 use_checkpoint=False,
+                 cat_method='none',  # 非常重要，调用时记得填写
+                 **kwargs):
         super().__init__()
         self.num_classes = num_classes
         self.num_layers = len(depths)
@@ -880,6 +881,13 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
 
         self.downsample = PatchMerging2D(dim=dims[2], norm_layer=norm_layer)
 
+        self.cat_method = cat_method
+        self.cat_proj = None
+        if self.cat_method == 'stack':
+            self.cat_proj = nn.Linear(dims[2] * 2, dims[2])
+        elif self.cat_method == 'cls':
+            self.cat_proj = nn.Linear(dims[2], dims[2])  # 该方法未确定，确定后更改
+
         # self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
@@ -931,7 +939,24 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         for layer in self.layers2[:3]:
             x2 = layer(x2)
 
-        x1_f, x2_f = self.fusion(x1, x2, x2, x1)
+        x2_cat_x1 = x2
+        x1_cat_x2 = x1
+        if self.cat_method == 'none':
+            # 不进行拼接操作，直接使用原序列
+            x2_cat_x1 = x2
+            x1_cat_x2 = x1
+        elif self.cat_method == 'add':
+            x2_cat_x1 = x1 + x2
+            x1_cat_x2 = x1 + x2
+        elif self.cat_method == 'stack':
+            u = torch.cat([x1, x2], dim=-1)
+            u = self.cat_proj(u)
+            x2_cat_x1 = u
+            x1_cat_x2 = u
+        elif self.cat_method == 'cls':
+            pass
+
+        x1_f, x2_f = self.fusion(x1, x2, x2_cat_x1, x1_cat_x2)
 
         x1_f = self.downsample(x1_f)  # 第三层移出了下采样，将下采样放置到融合后
         x2_f = self.downsample(x2_f)
