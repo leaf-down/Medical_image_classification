@@ -2,6 +2,12 @@
 # Name: CrossMamba1
 # Description: 实现了crossmamba.drawio文件中第一幅总体结构图
 # Calling Attention:
+"""
+调用VFEFM模块时，cat_method = 'none'，不进行拼接，分支1直接使用分支2做参数输入，分支2一样
+               cat_method = 'stack'，两分支在通道维度上进行堆叠，然后线性映射降维为原来的通道数。两分支使用相同的内容感知参数输入
+               cat_method = 'add'，两分支直接相加做内容感知参数，两分支使用相同的内容感知参数输入
+               cat_method = 'cls'，
+"""
 # =============================================================================
 
 import torch
