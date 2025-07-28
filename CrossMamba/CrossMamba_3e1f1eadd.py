@@ -1,5 +1,5 @@
 # =============================================================================
-# Name: CrossMamba1
+# Name: CrossMamba_3e1f1eadd
 # Description: 实现了crossmamba.drawio文件中第一幅总体结构图
 # Calling Attention:
 """
@@ -837,8 +837,10 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         self.num_features = dims[-1]
         self.dims = dims
 
-        self.patch_embed = PatchEmbed2D(patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
+        self.patch_embed1 = PatchEmbed2D(patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
                                         norm_layer=norm_layer if patch_norm else None)
+        self.patch_embed2 = PatchEmbed2D(patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
+                                         norm_layer=norm_layer if patch_norm else None)
 
         # WASTED absolute position embedding ======================
         self.ape = False
@@ -848,7 +850,8 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
             self.patches_resolution = self.patch_embed.patches_resolution
             self.absolute_pos_embed = nn.Parameter(torch.zeros(1, *self.patches_resolution, self.embed_dim))
             trunc_normal_(self.absolute_pos_embed, std=.02)
-        self.pos_drop = nn.Dropout(p=drop_rate)
+        self.pos_drop1 = nn.Dropout(p=drop_rate)
+        self.pos_drop2 = nn.Dropout(p=drop_rate)
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
 
@@ -930,15 +933,15 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         return {'relative_position_bias_table'}
 
     def forward_backbone(self, x1, x2):
-        x1 = self.patch_embed(x1)
+        x1 = self.patch_embed1(x1)
         if self.ape:
             x1 = x1 + self.absolute_pos_embed
-        x1 = self.pos_drop(x1)
+        x1 = self.pos_drop1(x1)
 
-        x2 = self.patch_embed(x2)
+        x2 = self.patch_embed2(x2)
         if self.ape:
             x2 = x2 + self.absolute_pos_embed
-        x2 = self.pos_drop(x2)
+        x2 = self.pos_drop2(x2)
 
         for layer in self.layers1[:3]:
             x1 = layer(x1)
