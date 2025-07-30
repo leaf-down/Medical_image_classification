@@ -591,7 +591,7 @@ class VSSLayer_up(nn.Module):
 class VSSM(nn.Module, PyTorchModelHubMixin):
     def __init__(self, patch_size=4, in_chans=3, num_classes=1000, depths=[2, 2, 4, 2], depths_decoder=[2, 9, 2, 2],
                  dims=[128, 256, 512, 1024], dims_decoder=[1024, 512, 256, 128],  # 原为[96, 192, 384, 768]
-                 d_state=16, drop_rate=0.,
+                 d_state=128, drop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, patch_norm=True,
                  use_checkpoint=False, **kwargs):
