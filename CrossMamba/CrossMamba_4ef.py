@@ -832,7 +832,7 @@ class Layer(nn.Module, PyTorchModelHubMixin):
             else:
                 x1 = blk(x1)
 
-        for blk in self.blocks1:
+        for blk in self.blocks2:
             if self.use_checkpoint:
                 x2 = checkpoint.checkpoint(blk, x2)
             else:
@@ -861,7 +861,7 @@ class Layer(nn.Module, PyTorchModelHubMixin):
 
         if self.downsample is not None:
             x1_f = self.downsample1(x1_f)
-            x2_f = self.downsample1(x2_f)
+            x2_f = self.downsample2(x2_f)
 
         return x1_f, x2_f
 
