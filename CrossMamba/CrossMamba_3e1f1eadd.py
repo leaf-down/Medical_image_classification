@@ -888,7 +888,8 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         self.fusion = CrossMamba(d_model=dims[-2],
                                  dropout=attn_drop_rate)
 
-        self.downsample = PatchMerging2D(dim=dims[2], norm_layer=norm_layer)
+        self.downsample1 = PatchMerging2D(dim=dims[2], norm_layer=norm_layer)
+        self.downsample2 = PatchMerging2D(dim=dims[2], norm_layer=norm_layer)
 
         self.cat_method = cat_method
         self.cat_proj = None
@@ -967,8 +968,8 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
 
         x1_f, x2_f = self.fusion(x1, x2, x2_cat_x1, x1_cat_x2)
 
-        x1_f = self.downsample(x1_f)  # 第三层移出了下采样，将下采样放置到融合后
-        x2_f = self.downsample(x2_f)
+        x1_f = self.downsample1(x1_f)  # 第三层移出了下采样，将下采样放置到融合后
+        x2_f = self.downsample2(x2_f)
 
         x1_f = self.layers1[-1](x1_f)
         x2_f = self.layers2[-1](x2_f)
