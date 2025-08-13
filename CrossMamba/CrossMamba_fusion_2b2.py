@@ -924,6 +924,7 @@ class upLayer(nn.Module, PyTorchModelHubMixin):
             drop_path=0.,
             norm_layer=nn.LayerNorm,
             upsample=None,
+            skip=True,
             use_checkpoint=False,
             d_state=16,
             **kwargs,
@@ -977,12 +978,19 @@ class upLayer(nn.Module, PyTorchModelHubMixin):
             self.upsample1 = None
             self.upsample2 = None
 
+        self.skip = skip
+
     def forward(self, x10, x20,
                 x1_down, x2_down):
-        x10 = torch.cat([x10, x1_down], dim=-1)
-        x1 = self.in_proj1(x10)
-        x20 = torch.cat([x20, x2_down], dim=-1)
-        x2 = self.in_proj2(x20)
+
+        if self.skip:
+            x10 = torch.cat([x10, x1_down], dim=-1)
+            x1 = self.in_proj1(x10)
+            x20 = torch.cat([x20, x2_down], dim=-1)
+            x2 = self.in_proj2(x20)
+        else:
+            x1 = x10
+            x2 = x20
 
         for blk in self.blocks1:
             if self.use_checkpoint:
@@ -1087,6 +1095,7 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         self.final_cat_proj = nn.Linear(self.final_dim * 2, self.final_dim)
 
         self.final_expand = Final_PatchExpand2D(dim=dims_decoder[-1])
+        self.final_conv = nn.Conv2d(dims_decoder[-1] // 4, 1, 1)
 
         self.layers_up = nn.ModuleList()
         for i_layer_up in range(self.num_layers_up):
@@ -1100,13 +1109,14 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
                 drop_path=dpr[sum(depths_decoder[:i_layer_up]):sum(depths_decoder[:i_layer_up + 1])],
                 norm_layer=norm_layer,
                 upsample=PatchExpand2D if (i_layer_up < self.num_layers_up - 1) else None,  # 只有最后一层不含下采样
+                skip=False if (i_layer_up == 0) else True,  # 上采样第一层因直接连接下采样最后一层故不使用跳跃连接
                 use_checkpoint=use_checkpoint,
             )
             self.layers_up.append(layer_up)
 
         # ------------------------------------ 桥接部分 -------------------------------------
-        self.bridge1 = nn.Linear(dims[-1], dims_decoder[0])  # 目前仅作占位，后续加新的设计
-        self.bridge2 = nn.Linear(dims[-1], dims_decoder[0])
+        self.bridge1 = nn.Conv2d(dims[-1], dims_decoder[0], 1)  # 目前仅作占位，后续加新的设计
+        self.bridge2 = nn.Conv2d(dims[-1], dims_decoder[0], 1)
 
         # -------------------------------- 模型常规参数初始化 -------------------------------------------
         self.apply(self._init_weights)
@@ -1176,8 +1186,10 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
 
         return out
 
-    def forward(self, x1, x2):  # 全要改
+    def forward(self, x1, x2):
         x1, x2, skip = self.forward_down(x1, x2)
         x = self.forward_up(x1, x2, skip)
+        x = x.permute(0, 3, 1, 2)
+        x = self.final_conv(x)
 
         return x
