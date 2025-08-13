@@ -1084,6 +1084,7 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         self.num_layers_up = len(depths_decoder)
         self.final_dim = dims_decoder[-1]
         self.dims_decoder = dims_decoder
+        self.final_cat_proj = nn.Linear(self.final_dim * 2, self.final_dim)
 
         self.final_expand = Final_PatchExpand2D(dim=dims_decoder[-1])
 
@@ -1168,15 +1169,15 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
             x1, x2 = layer_up(x1, x2, u1, u2)
 
         x = self.norm(torch.cat([x1, x2], dim=-1))
-        # 还有一个用来降维加两个通道特征融合的模块（计划用KAN）
-        # 最后连一个Final_Expand
+        x_cat = self.final_cat_proj(x)  # 一个用来降维加两个通道特征融合的模块（计划用KAN，目前先写linear）
 
-        return x
+        # 最后连一个Final_Expand
+        out = self.final_expand(x_cat)
+
+        return out
 
     def forward(self, x1, x2):  # 全要改
-        x = self.forward_backbone(x1, x2)
-        x = x.permute(0, 3, 1, 2)
-        x = self.avgpool(x)
-        x = torch.flatten(x, start_dim=1)
-        x = self.head(x)
+        x1, x2, skip = self.forward_down(x1, x2)
+        x = self.forward_up(x1, x2, skip)
+
         return x
