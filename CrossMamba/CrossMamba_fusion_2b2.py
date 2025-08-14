@@ -1177,6 +1177,7 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
             u1 = skip[i][0]
             u2 = skip[i][1]
             x1, x2 = layer_up(x1, x2, u1, u2)
+            i += 1
 
         x = self.norm(torch.cat([x1, x2], dim=-1))
         x_cat = self.final_cat_proj(x)  # 一个用来降维加两个通道特征融合的模块（计划用KAN，目前先写linear）
