@@ -58,9 +58,12 @@ class CrossMamba(nn.Module, PyTorchModelHubMixin):
             d_state=128,
             # d_state="auto", # 20240109
             d_conv=3,  # 卷积核大小
-            expand=2,
+            expand=2,   #原本是2
             headdim=64,
-            d_ssm=None,  # If not None, we only apply SSM on this many dimensions, the rest uses gated MLP
+
+            d_ssm=None,
+            # If not None, we only apply SSM on this many dimensions, the rest uses gated MLP
+            #d_ssm=256,
             ngroups=1,
             A_init_range=(1, 16),
             D_has_hdim=False,
@@ -243,7 +246,9 @@ class CrossMamba(nn.Module, PyTorchModelHubMixin):
         zx1 = self.skip_in_proj(u1)
         zx2 = self.skip_in_proj(u2)
         # 分离x0和z0和z
-        d_mlp = (self.d_inner - 2 * self.d_ssm) // 2
+
+        d_mlp = (zx1.shape[-1] - self.d_ssm) // 2
+
         z01, x01, z1 = torch.split(zx1,
                                    [d_mlp, d_mlp, self.d_ssm],
                                    dim=-1)
@@ -645,40 +650,69 @@ def channel_shuffle(x: Tensor, groups: int) -> Tensor:
 class SS_Conv_SSD(nn.Module, PyTorchModelHubMixin):
     def __init__(
             self,
-            hidden_dim: int = 0,
+            hidden_dim: int = 0,                     # 模块的“逻辑通道数”（与真实输入可不同）
+            input_dim: int | None = None,            # 真实进入 forward 的最后通道维
             drop_path: float = 0,
             norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
             attn_drop_rate: float = 0,
             d_state: int = 64,
             **kwargs,
+
     ):
         super().__init__()
-        self.ln_1 = norm_layer(hidden_dim // 2)
-        self.self_attention = MedSSD(d_model=hidden_dim // 2, dropout=attn_drop_rate, d_state=d_state, **kwargs)
+        if input_dim is None:
+            input_dim = hidden_dim
+        self.input_dim = input_dim
+
+        # 关键：forward 里会 chunk(2, -1)，右半路的最后维是 input_dim // 2
+        self.ln_1 = norm_layer(self.input_dim // 2)
+
+        # MedSSD 的 d_model 必须等于右半路的通道数
+        self.self_attention = MedSSD(
+            d_model=self.input_dim // 2,
+            dropout=attn_drop_rate,
+            d_state=d_state,
+            **kwargs
+        )
         self.drop_path = DropPath(drop_path)
 
+        # 左路卷积吃的是左半路，通道同样是 input_dim // 2
+        c_half = self.input_dim // 2
         self.conv33conv33conv11 = nn.Sequential(
-            nn.BatchNorm2d(hidden_dim // 2),
-            nn.Conv2d(in_channels=hidden_dim // 2, out_channels=hidden_dim // 2, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(hidden_dim // 2),
+            nn.BatchNorm2d(c_half),
+            nn.Conv2d(in_channels=c_half, out_channels=c_half, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(c_half),
             nn.ReLU(),
-            nn.Conv2d(in_channels=hidden_dim // 2, out_channels=hidden_dim // 2, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(hidden_dim // 2),
+            nn.Conv2d(in_channels=c_half, out_channels=c_half, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(c_half),
             nn.ReLU(),
-            nn.Conv2d(in_channels=hidden_dim // 2, out_channels=hidden_dim // 2, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=c_half, out_channels=c_half, kernel_size=1, stride=1),
             nn.ReLU()
         )
-        # self.finalconv11 = nn.Conv2d(in_channels=hidden_dim, out_channels=hidden_dim, kernel_size=1, stride=1)
 
     def forward(self, input: torch.Tensor):
+        # input: [B, H, W, input_dim]
+
         input_left, input_right = input.chunk(2, dim=-1)
+
+        # 安全断言：LN 的 normalized_shape 应等于右半路最后维
+        assert input_right.shape[-1] == self.ln_1.normalized_shape[0], \
+            f"LN expect {self.ln_1.normalized_shape[0]}, got {input_right.shape[-1]}"
+
+        # 右半：LN -> MedSSD -> DropPath
         x = self.drop_path(self.self_attention(self.ln_1(input_right)))
+
+        # 左半：B H W C -> B C H W -> conv -> B H W C
         input_left = input_left.permute(0, 3, 1, 2).contiguous()
         input_left = self.conv33conv33conv11(input_left)
         input_left = input_left.permute(0, 2, 3, 1).contiguous()
+
+        # 拼接 + shuffle + 残差
         output = torch.cat((input_left, x), dim=-1)
         output = channel_shuffle(output, groups=2)
         return output + input
+
+
 
 
 # --------------------- Embedding, Downsampling, Upsampling Module ----------------------
@@ -753,19 +787,28 @@ class PatchMerging2D(nn.Module):
 class PatchExpand2D(nn.Module):
     def __init__(self, dim, dim_scale=2, norm_layer=nn.LayerNorm):
         super().__init__()
-        self.dim = dim * 2
+        self.dim = dim
         self.dim_scale = dim_scale
-        self.expand = nn.Linear(self.dim, dim_scale * self.dim, bias=False)
-        self.norm = norm_layer(self.dim // dim_scale)
+
+        # 输入是 C，输出是 dim_scale² × C
+        self.expand = nn.Linear(dim, dim * dim_scale, bias=False)
+
+        self.norm = norm_layer(dim // dim_scale)
 
     def forward(self, x):
         B, H, W, C = x.shape
-        x = self.expand(x)
+        x = x.view(B * H * W, C)  # Flatten spatial dims
+        x = self.expand(x)  # Linear: [BHW, C] -> [BHW, C * scale]
+        x = x.view(B, H, W, -1)  # Restore spatial layout
 
-        x = rearrange(x, 'b h w (p1 p2 c)-> b (h p1) (w p2) c', p1=self.dim_scale, p2=self.dim_scale,
-                      c=C // self.dim_scale)
+        # 确保下面能拆成 (p1 * p2 * c)
+        x = rearrange(
+            x, 'b h w (p1 p2 c) -> b (h p1) (w p2) c',
+            p1=self.dim_scale, p2=self.dim_scale,
+            c=self.dim // self.dim_scale
+        )
+
         x = self.norm(x)
-
         return x
 
 
@@ -827,22 +870,25 @@ class downLayer(nn.Module, PyTorchModelHubMixin):
 
         self.blocks1 = nn.ModuleList([
             SS_Conv_SSD(
-                hidden_dim=dim,
+                hidden_dim=dim,  # 模块的逻辑通道
+                input_dim=dim,  # 真实输入就是 dim
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 norm_layer=norm_layer,
                 attn_drop_rate=attn_drop,
                 d_state=d_state,
-            )
-            for i in range(depth)])
+            ) for i in range(depth)
+        ])
+
         self.blocks2 = nn.ModuleList([
             SS_Conv_SSD(
                 hidden_dim=dim,
+                input_dim=dim,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 norm_layer=norm_layer,
                 attn_drop_rate=attn_drop,
                 d_state=d_state,
-            )
-            for i in range(depth)])
+            ) for i in range(depth)
+        ])
         self.fusion = CrossMamba(d_model=dim, dropout=attn_drop)
 
         if True:  # is this really applied? Yes, but been overriden later in VSSM!
@@ -861,41 +907,38 @@ class downLayer(nn.Module, PyTorchModelHubMixin):
             self.downsample1 = None
             self.downsample2 = None
 
-    def forward(self, x1, x2):
+    def forward(self, x1, x2,skip_list=None):
+
+
         for blk in self.blocks1:
-            if self.use_checkpoint:
-                x1 = checkpoint.checkpoint(blk, x1)
-            else:
-                x1 = blk(x1)
-
+            x1 = checkpoint.checkpoint(blk, x1) if self.use_checkpoint else blk(x1)
         for blk in self.blocks2:
-            if self.use_checkpoint:
-                x2 = checkpoint.checkpoint(blk, x2)
-            else:
-                x2 = blk(x2)
+            x2 = checkpoint.checkpoint(blk, x2) if self.use_checkpoint else blk(x2)
 
-        x2_cat_x1 = x2
-        x1_cat_x2 = x1
+
+        # 拼接处理
         if self.cat_method == 'none':
-            # 不进行拼接操作，直接使用原序列
-            x2_cat_x1 = x2
-            x1_cat_x2 = x1
+            x2_cat_x1, x1_cat_x2 = x2, x1
         elif self.cat_method == 'add':
-            x2_cat_x1 = x1 + x2
-            x1_cat_x2 = x1 + x2
+            x2_cat_x1, x1_cat_x2 = x1 + x2, x1 + x2
         elif self.cat_method == 'stack':
             u = torch.cat([x1, x2], dim=-1)
             u = self.cat_proj(u)
-            x2_cat_x1 = u
-            x1_cat_x2 = u
-        elif self.cat_method == 'cls':
-            pass
+            x2_cat_x1, x1_cat_x2 = u, u
+        else:
+            x2_cat_x1, x1_cat_x2 = x2, x1
 
+
+        # 调用 CrossMamba 融合
         x1_f, x2_f = self.fusion(x1, x2, x2_cat_x1, x1_cat_x2)
+
+        # 残差
         x1_f = x1 + x1_f
         x2_f = x2 + x2_f
-
-        if self.downsample is not None:
+        if skip_list is not None:
+            skip_list.append((x1, x2))
+        # 下采样
+        if self.downsample1 is not None:
             x1_f = self.downsample1(x1_f)
             x2_f = self.downsample2(x2_f)
 
@@ -916,18 +959,19 @@ class upLayer(nn.Module, PyTorchModelHubMixin):
     """
 
     def __init__(
-            self,
-            dim,
-            depth,
-            cat_method,
-            attn_drop=0.,
-            drop_path=0.,
-            norm_layer=nn.LayerNorm,
-            upsample=None,
-            skip=True,
-            use_checkpoint=False,
-            d_state=16,
-            **kwargs,
+        self,
+        dim,
+        depth,
+        cat_method,
+        attn_drop=0.,
+        drop_path=0.,
+        norm_layer=nn.LayerNorm,
+        upsample=None,
+        upsample_in_dim=None,      # <--- 新增
+        skip=True,
+        use_checkpoint=False,
+        d_state=16,
+        **kwargs,
     ):
         super().__init__()
         self.dim = dim
@@ -937,77 +981,79 @@ class upLayer(nn.Module, PyTorchModelHubMixin):
         if self.cat_method == 'stack':
             self.cat_proj = nn.Linear(dim * 2, dim)
         elif self.cat_method == 'cls':
-            self.cat_proj = nn.Linear(dim, dim)  # 该方法未确定，确定后更改
+            self.cat_proj = nn.Linear(dim, dim)
 
+        # cat 之后是 [2*dim] -> dim
         self.in_proj1 = nn.Linear(dim * 2, dim)
         self.in_proj2 = nn.Linear(dim * 2, dim)
 
         self.blocks1 = nn.ModuleList([
             SS_Conv_SSD(
                 hidden_dim=dim,
+                input_dim=dim,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 norm_layer=norm_layer,
                 attn_drop_rate=attn_drop,
                 d_state=d_state,
-            )
-            for i in range(depth)])
+            ) for i in range(depth)
+        ])
         self.blocks2 = nn.ModuleList([
             SS_Conv_SSD(
                 hidden_dim=dim,
+                input_dim=dim,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 norm_layer=norm_layer,
                 attn_drop_rate=attn_drop,
                 d_state=d_state,
-            )
-            for i in range(depth)])
+            ) for i in range(depth)
+        ])
         self.fusion = CrossMamba(d_model=dim, dropout=attn_drop)
 
-        if True:  # is this really applied? Yes, but been overriden later in VSSM!
-            def _init_weights(module: nn.Module):
-                for name, p in module.named_parameters():
-                    if name in ["out_proj.weight"]:
-                        p = p.clone().detach_()  # fake init, just to keep the seed ....
-                        nn.init.kaiming_uniform_(p, a=math.sqrt(5))
-
-            self.apply(_init_weights)
-
+        # 关键：upsample 用的是“上采样前”的通道
         if upsample is not None:
-            self.upsample1 = upsample(dim=dim, norm_layer=norm_layer)
-            self.upsample2 = upsample(dim=dim, norm_layer=norm_layer)
+            assert upsample_in_dim is not None, "upsample_in_dim must be provided when upsample is not None"
+            self.upsample1 = upsample(dim=upsample_in_dim, norm_layer=norm_layer)
+            self.upsample2 = upsample(dim=upsample_in_dim, norm_layer=norm_layer)
         else:
             self.upsample1 = None
             self.upsample2 = None
 
         self.skip = skip
 
-    def forward(self, x10, x20,
-                x1_down, x2_down):
 
+    def forward(self, x10, x20, x1_down, x2_down):
+
+        # Step 1: Upsample decoder inputs first
+        if self.upsample1 is not None:
+            x10 = self.upsample1(x10)
+            x20 = self.upsample2(x20)
+
+        # Step 2: Do skip connection (cat + projection)
         if self.skip:
+            # Add assert or debug to verify
+            assert x10.shape[1:3] == x1_down.shape[1:3], f"Shape mismatch: x10={x10.shape}, x1_down={x1_down.shape}"
+            assert x20.shape[1:3] == x2_down.shape[1:3], f"Shape mismatch: x20={x20.shape}, x2_down={x2_down.shape}"
+
             x10 = torch.cat([x10, x1_down], dim=-1)
             x1 = self.in_proj1(x10)
+
             x20 = torch.cat([x20, x2_down], dim=-1)
             x2 = self.in_proj2(x20)
         else:
             x1 = x10
             x2 = x20
 
+        assert x1.shape[-1] == self.dim and x2.shape[-1] == self.dim, \
+            f"upLayer forward channel mismatch: expect dim={self.dim}, got x1={x1.shape[-1]}, x2={x2.shape[-1]}"
+
+        # Step 3: Block fusion
         for blk in self.blocks1:
-            if self.use_checkpoint:
-                x1 = checkpoint.checkpoint(blk, x1)
-            else:
-                x1 = blk(x1)
-
+            x1 = checkpoint.checkpoint(blk, x1) if self.use_checkpoint else blk(x1)
         for blk in self.blocks2:
-            if self.use_checkpoint:
-                x2 = checkpoint.checkpoint(blk, x2)
-            else:
-                x2 = blk(x2)
+            x2 = checkpoint.checkpoint(blk, x2) if self.use_checkpoint else blk(x2)
 
-        x2_cat_x1 = x2
-        x1_cat_x2 = x1
+        # Step 4: Feature fusion strategy
         if self.cat_method == 'none':
-            # 不进行拼接操作，直接使用原序列
             x2_cat_x1 = x2
             x1_cat_x2 = x1
         elif self.cat_method == 'add':
@@ -1024,10 +1070,6 @@ class upLayer(nn.Module, PyTorchModelHubMixin):
         x1_f, x2_f = self.fusion(x1, x2, x2_cat_x1, x1_cat_x2)
         x1_f = x1 + x1_f
         x2_f = x2 + x2_f
-
-        if self.downsample is not None:
-            x1_f = self.upsample1(x1_f)
-            x2_f = self.upsample2(x2_f)
 
         return x1_f, x2_f
 
@@ -1048,8 +1090,6 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
 
         # WASTED absolute position embedding ======================
         self.ape = False
-        # self.ape = False
-        # drop_rate = 0.0
         if self.ape:
             self.patches_resolution = self.patch_embed.patches_resolution
             self.absolute_pos_embed = nn.Parameter(torch.zeros(1, *self.patches_resolution, self.embed_dim))
@@ -1057,8 +1097,7 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         self.pos_drop1 = nn.Dropout(p=drop_rate)
         self.pos_drop2 = nn.Dropout(p=drop_rate)
 
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
-
+        # 归一化（用于顶端 cat 后）
         self.norm = nn.LayerNorm(dims_decoder[-1] * 2)
 
         # ------------------------------------ 下采样部分 ------------------------------------------
@@ -1067,26 +1106,36 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         self.num_features = dims[-1]
         self.dims = dims
 
-        self.patch_embed1 = PatchEmbed2D(patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
-                                         norm_layer=norm_layer if patch_norm else None)
-        self.patch_embed2 = PatchEmbed2D(patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
-                                         norm_layer=norm_layer if patch_norm else None)
+        self.patch_embed1 = PatchEmbed2D(
+            patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
+            norm_layer=norm_layer if patch_norm else None
+        )
+        self.patch_embed2 = PatchEmbed2D(
+            patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
+            norm_layer=norm_layer if patch_norm else None
+        )
+
+        # encoder 的随机深度表（仅覆盖 encoder 的总 depth）
+        dpr_enc = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
+        enc_ptr = 0
 
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
+            depth_i = depths[i_layer]
             layer = downLayer(
                 dim=dims[i_layer],
-                depth=depths[i_layer],
+                depth=depth_i,
                 cat_method=cat_method,
                 d_state=math.ceil(dims[0] / 6) if d_state is None else d_state,  # 20240109
                 drop=drop_rate,
                 attn_drop=attn_drop_rate,
-                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                drop_path=dpr_enc[enc_ptr: enc_ptr + depth_i],  # 精确切片给本层
                 norm_layer=norm_layer,
                 downsample=PatchMerging2D if (i_layer < self.num_layers - 1) else None,  # 只有最后一层不含下采样
                 use_checkpoint=use_checkpoint,
             )
             self.layers.append(layer)
+            enc_ptr += depth_i
 
         # ------------------------------------- 上采样部分 -------------------------------------------
         self.num_layers_up = len(depths_decoder)
@@ -1097,25 +1146,46 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         self.final_expand = Final_PatchExpand2D(dim=dims_decoder[-1])
         self.final_conv = nn.Conv2d(dims_decoder[-1] // 4, 1, 1)
 
+        # decoder 的随机深度表（独立于 encoder）
+        dpr_dec = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths_decoder))]
+        dec_ptr = 0
+
         self.layers_up = nn.ModuleList()
         for i_layer_up in range(self.num_layers_up):
+            depth_i = depths_decoder[i_layer_up]
+            in_dim_before_up = self.dims_decoder[i_layer_up]
+
+            if i_layer_up < self.num_layers_up - 1:
+                # 这一层会先上采样 → 通道减半
+                block_dim = in_dim_before_up // 2
+                up = PatchExpand2D
+                up_in_dim = in_dim_before_up
+            else:
+                # 最后一层不做上采样
+                block_dim = in_dim_before_up
+                up = None
+                up_in_dim = None
+
             layer_up = upLayer(
-                dim=dims_decoder[i_layer_up],
-                depth=depths_decoder[i_layer_up],
+                dim=block_dim,  # blocks/in_proj/SS_Conv_SSD 用这个通道数
+                depth=depth_i,
                 cat_method=cat_method,
-                d_state=math.ceil(dims[0] / 6) if d_state is None else d_state,  # 20240109
+                d_state=math.ceil(self.dims[0] / 6) if d_state is None else d_state,
                 drop=drop_rate,
                 attn_drop=attn_drop_rate,
-                drop_path=dpr[sum(depths_decoder[:i_layer_up]):sum(depths_decoder[:i_layer_up + 1])],
+                drop_path=dpr_dec[dec_ptr: dec_ptr + depth_i],
                 norm_layer=norm_layer,
-                upsample=PatchExpand2D if (i_layer_up < self.num_layers_up - 1) else None,  # 只有最后一层不含下采样
-                skip=False if (i_layer_up == 0) else True,  # 上采样第一层因直接连接下采样最后一层故不使用跳跃连接
+                upsample=up,
+                upsample_in_dim=up_in_dim,  # <--- 新增传参
+                skip=False if (i_layer_up == 0) else True,
                 use_checkpoint=use_checkpoint,
             )
             self.layers_up.append(layer_up)
+            dec_ptr += depth_i
 
         # ------------------------------------ 桥接部分 -------------------------------------
-        self.bridge1 = nn.Conv2d(dims[-1], dims_decoder[0], 1)  # 目前仅作占位，后续加新的设计
+        # 目前仅作占位，后续可替换为更复杂的桥接设计
+        self.bridge1 = nn.Conv2d(dims[-1], dims_decoder[0], 1)
         self.bridge2 = nn.Conv2d(dims[-1], dims_decoder[0], 1)
 
         # -------------------------------- 模型常规参数初始化 -------------------------------------------
@@ -1159,38 +1229,53 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         if self.ape:
             x2 = x2 + self.absolute_pos_embed
         x2 = self.pos_drop2(x2)
-
         skip = []
         for layer in self.layers:
-            x1, x2 = layer(x1, x2)
-            skip.append((x1, x2))
-
-        return x1, x2, skip
+            # layer 内部会在“融合后、下采样前”把 (x1_skip, x2_skip) append 到 skip_list
+            x1, x2 = layer(x1, x2, skip_list=skip)
+        return x1, x2,skip
 
     def forward_up(self, x1, x2, skip):
-        # 桥接部分等待一个新的设计
-        x1 = self.bridge1(x1)
-        x2 = self.bridge2(x2)
+        # Bridge
+        x1 = self.bridge1(x1.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+        x2 = self.bridge2(x2.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
 
-        i = 0
-        for layer_up in self.layers_up:
-            u1 = skip[i][0]
-            u2 = skip[i][1]
+        # 倒序便于从深到浅查找
+        skip_rev = list(reversed(skip))  # [H/32, H/16, H/8, H/4]
+
+        for j, layer_up in enumerate(self.layers_up):
+            if j == 0:
+                # 第一层不使用 skip（保持当前设计）
+                u1, u2 = x1, x2
+            else:
+                # 注意：x1/x2 是上一层输出（本层上采样前）
+                # 本层会先上采样，再 cat；我们想拿到“上采样后的 H,W”
+                # 由于本工程 PatchExpand2D 2× 放大，所以目标 H,W 是 2*H, 2*W
+                H, W = x1.shape[1], x1.shape[2]
+                # 关键：只有该层“真的会上采样”时，目标尺寸才是 (H*2, W*2)
+                if layer_up.upsample1 is not None:
+                    target_hw = (H * 2, W * 2)
+                else:
+                    target_hw = (H, W)
+
+                # 在 skip 里找第一个和 target_hw 相同空间尺寸的特征
+                u1 = u2 = None
+                for (s1, s2) in skip_rev:
+                    if s1.shape[1:3] == target_hw:
+                        u1, u2 = s1, s2
+                        break
+                assert u1 is not None, f"No skip with spatial size {target_hw} found!"
+
             x1, x2 = layer_up(x1, x2, u1, u2)
-            i += 1
 
         x = self.norm(torch.cat([x1, x2], dim=-1))
-        x_cat = self.final_cat_proj(x)  # 一个用来降维加两个通道特征融合的模块（计划用KAN，目前先写linear）
-
-        # 最后连一个Final_Expand
+        x_cat = self.final_cat_proj(x)
         out = self.final_expand(x_cat)
-
         return out
 
     def forward(self, x1, x2):
         x1, x2, skip = self.forward_down(x1, x2)
         x = self.forward_up(x1, x2, skip)
-        x = x.permute(0, 3, 1, 2)
+        # x = x.permute(0, 3, 1, 2)
         x = self.final_conv(x)
-
         return x
