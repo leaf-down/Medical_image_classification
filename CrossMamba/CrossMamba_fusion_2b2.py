@@ -1274,8 +1274,11 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
         return out
 
     def forward(self, x1, x2):
+        # train文件载入的数据集张量形状是 (B, C, H, W) ，而我们的模型是按照 (B, H, W, C) 编写的
+        x1 = x1.permute(0, 2, 3, 1).contiguous()
+        x2 = x2.permute(0, 2, 3, 1).contiguous()
         x1, x2, skip = self.forward_down(x1, x2)
         x = self.forward_up(x1, x2, skip)
-        # x = x.permute(0, 3, 1, 2)
+        x = x.permute(0, 3, 1, 2).contiguous()
         x = self.final_conv(x)
         return x
