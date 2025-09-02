@@ -856,7 +856,7 @@ class downLayer(nn.Module, PyTorchModelHubMixin):
             norm_layer=nn.LayerNorm,
             downsample=None,
             use_checkpoint=False,
-            d_state=128,
+            d_state=64,
             **kwargs,
     ):
         super().__init__()
@@ -983,12 +983,12 @@ class upLayer(nn.Module, PyTorchModelHubMixin):
             self.cat_proj = nn.Linear(dim * 2, dim)
         elif self.cat_method == 'cls':
             self.cat_proj = nn.Linear(dim, dim)
+        self.cat_down = nn.Linear(dim * 2, dim)
 
         # cat 之后是 [2*dim] -> dim
-        self.in_proj1 = nn.Linear(dim * 2, dim)
-        self.in_proj2 = nn.Linear(dim * 2, dim)
+        self.in_proj = nn.Linear(dim * 2, dim)
 
-        self.blocks1 = nn.ModuleList([
+        self.blocks = nn.ModuleList([
             SS_Conv_SSD(
                 hidden_dim=dim,
                 input_dim=dim,
@@ -998,86 +998,45 @@ class upLayer(nn.Module, PyTorchModelHubMixin):
                 d_state=d_state,
             ) for i in range(depth)
         ])
-        self.blocks2 = nn.ModuleList([
-            SS_Conv_SSD(
-                hidden_dim=dim,
-                input_dim=dim,
-                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                norm_layer=norm_layer,
-                attn_drop_rate=attn_drop,
-                d_state=d_state,
-            ) for i in range(depth)
-        ])
-        self.fusion = CrossMamba(d_model=dim, dropout=attn_drop)
+
 
         # 关键：upsample 用的是“上采样前”的通道
         if upsample is not None:
             assert upsample_in_dim is not None, "upsample_in_dim must be provided when upsample is not None"
-            self.upsample1 = upsample(dim=upsample_in_dim, norm_layer=norm_layer)
-            self.upsample2 = upsample(dim=upsample_in_dim, norm_layer=norm_layer)
+            self.upsample = upsample(dim=upsample_in_dim, norm_layer=norm_layer)
         else:
-            self.upsample1 = None
-            self.upsample2 = None
+            self.upsample = None
 
         self.skip = skip
 
 
-    def forward(self, x10, x20, x1_down, x2_down):
+    def forward(self, x0, x1_down, x2_down):
 
         # Step 1: Upsample decoder inputs first
-        if self.upsample1 is not None:
-            x10 = self.upsample1(x10)
-            x20 = self.upsample2(x20)
+        if self.upsample is not None:
+            x0 = self.upsample(x0)
 
         # Step 2: Do skip connection (cat + projection)
         if self.skip:
             # Add assert or debug to verify
-            assert x10.shape[1:3] == x1_down.shape[1:3], f"Shape mismatch: x10={x10.shape}, x1_down={x1_down.shape}"
-            assert x20.shape[1:3] == x2_down.shape[1:3], f"Shape mismatch: x20={x20.shape}, x2_down={x2_down.shape}"
+            x_down = torch.cat([x1_down, x2_down], dim=-1)
+            x_down = self.cat_down(x_down)
 
-            x10 = torch.cat([x10, x1_down], dim=-1)
-            x1 = self.in_proj1(x10)
-
-            x20 = torch.cat([x20, x2_down], dim=-1)
-            x2 = self.in_proj2(x20)
+            x = torch.cat([x0, x_down], dim=-1)
+            x = self.in_proj(x)
         else:
-            x1 = x10
-            x2 = x20
-
-        assert x1.shape[-1] == self.dim and x2.shape[-1] == self.dim, \
-            f"upLayer forward channel mismatch: expect dim={self.dim}, got x1={x1.shape[-1]}, x2={x2.shape[-1]}"
+            x = x0
 
         # Step 3: Block fusion
-        for blk in self.blocks1:
-            x1 = checkpoint.checkpoint(blk, x1) if self.use_checkpoint else blk(x1)
-        for blk in self.blocks2:
-            x2 = checkpoint.checkpoint(blk, x2) if self.use_checkpoint else blk(x2)
+        for blk in self.blocks:
+            x = checkpoint.checkpoint(blk, x) if self.use_checkpoint else blk(x)
 
-        # Step 4: Feature fusion strategy
-        if self.cat_method == 'none':
-            x2_cat_x1 = x2
-            x1_cat_x2 = x1
-        elif self.cat_method == 'add':
-            x2_cat_x1 = x1 + x2
-            x1_cat_x2 = x1 + x2
-        elif self.cat_method == 'stack':
-            u = torch.cat([x1, x2], dim=-1)
-            u = self.cat_proj(u)
-            x2_cat_x1 = u
-            x1_cat_x2 = u
-        elif self.cat_method == 'cls':
-            pass
-
-        x1_f, x2_f = self.fusion(x1, x2, x2_cat_x1, x1_cat_x2)
-        x1_f = x1 + x1_f
-        x2_f = x2 + x2_f
-
-        return x1_f, x2_f
+        return x
 
 
 class VFEFM(nn.Module, PyTorchModelHubMixin):
     def __init__(self, patch_size=4, in_chans=3, num_classes=1000,
-                 depths=[2, 2, 4, 2],
+                 depths=[2, 2, 9, 2],
                  dims=[128, 256, 512, 1024],  # 原为[96, 192, 384, 768]
                  depths_decoder=[2, 9, 2, 2],
                  dims_decoder=[1024, 512, 256, 128],
@@ -1186,8 +1145,7 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
 
         # ------------------------------------ 桥接部分 -------------------------------------
         # 目前仅作占位，后续可替换为更复杂的桥接设计
-        self.bridge1 = nn.Conv2d(dims[-1], dims_decoder[0], 1)
-        self.bridge2 = nn.Conv2d(dims[-1], dims_decoder[0], 1)
+        self.bridge = nn.Linear(dims[-1] * 2, dims_decoder[0])
 
         # -------------------------------- 模型常规参数初始化 -------------------------------------------
         self.apply(self._init_weights)
@@ -1238,8 +1196,8 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
 
     def forward_up(self, x1, x2, skip):
         # Bridge
-        x1 = self.bridge1(x1.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
-        x2 = self.bridge2(x2.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+        x = torch.cat([x1, x2], dim=-1)
+        x = self.bridge(x)
 
         # 倒序便于从深到浅查找
         skip_rev = list(reversed(skip))  # [H/32, H/16, H/8, H/4]
@@ -1254,7 +1212,7 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
                 # 由于本工程 PatchExpand2D 2× 放大，所以目标 H,W 是 2*H, 2*W
                 H, W = x1.shape[1], x1.shape[2]
                 # 关键：只有该层“真的会上采样”时，目标尺寸才是 (H*2, W*2)
-                if layer_up.upsample1 is not None:
+                if layer_up.upsample is not None:
                     target_hw = (H * 2, W * 2)
                 else:
                     target_hw = (H, W)
@@ -1267,11 +1225,9 @@ class VFEFM(nn.Module, PyTorchModelHubMixin):
                         break
                 assert u1 is not None, f"No skip with spatial size {target_hw} found!"
 
-            x1, x2 = layer_up(x1, x2, u1, u2)
+            x = layer_up(x, u1, u2)
 
-        x = self.norm(torch.cat([x1, x2], dim=-1))
-        x_cat = self.final_cat_proj(x)
-        out = self.final_expand(x_cat)
+        out = self.final_expand(x)
         return out
 
     def forward(self, x1, x2):
