@@ -1,10 +1,12 @@
 #!/usr/bin/python
 # -*- encoding: utf-8 -*-
+# conda activate myenv
+# cd autodl-tmp/crossmamba
 from PIL import Image
 import numpy as np
 from glob import glob
 from torch.autograd import Variable
-from CrossMamba_fusion_2b2 import VFEFM
+from CrossMamba_conv import VFEFM
 from FusionMamba.TaskFusion_dataset import Fusion_dataset
 import argparse
 import datetime
@@ -73,7 +75,7 @@ def YCrCb2RGB(input_im):
 def train_fusion(num=0, logger=None, args=None):
     lr_start = args.lr
     modelpth = 'model_last'
-    Method = 'my_cross'
+    Method = 'crossmamba_fusion'
     modelpth = os.path.join(modelpth, Method)
     os.makedirs(modelpth, exist_ok=True)
 
@@ -82,9 +84,9 @@ def train_fusion(num=0, logger=None, args=None):
         patch_size=4,
         depths=[2, 2, 4, 2],
         dims=[128, 256, 512, 1024],
-        depths_decoder=[2, 9, 2, 2],
+        depths_decoder=[2, 4, 2, 2],
         dims_decoder=[1024, 512, 256, 128],
-        cat_method='stack',
+        cat_method='none',
         attn_drop_rate=0.0,
         drop_path_rate=0.1,
         use_checkpoint=False,
@@ -93,12 +95,12 @@ def train_fusion(num=0, logger=None, args=None):
 
     optimizer = torch.optim.Adam(fusionmodel.parameters(), lr=lr_start)
 
-    train_dataset = Fusion_dataset('train', data_root="./dataset/CT_MRI_Original", length=0)
+    train_dataset = Fusion_dataset('train', data_root="/root/autodl-tmp/crossmamba/dataset/CT_MRI_Original", length=0) # 0
     print("the training dataset is length:{}".format(len(train_dataset)))
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=False, # true
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=True,
@@ -110,11 +112,11 @@ def train_fusion(num=0, logger=None, args=None):
     st = glob_st = time.time()
     logger.info('Training Fusion Model start~')
 
-    for epo in range(0, epoch):
-        lr_start = args.lr if epo == 0 else args.lr * (0.75 ** (epo - 1))
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr_start
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epoch, eta_min=1e-6
+    )
 
+    for epo in range(epoch):
         for it, (image_vis, image_ir) in enumerate(train_loader):
             fusionmodel.train()
             image_vis = Variable(image_vis).cuda()
@@ -133,6 +135,20 @@ def train_fusion(num=0, logger=None, args=None):
             )
             loss_total = loss_fusion
             loss_total.backward()
+
+            # 🔹 打印每一层梯度到文件
+            """with open("grad_log_crossmamba_250906.txt", "a") as f:
+                f.write(f"\nEpoch {epo}, Iter {it}\n")
+                for name, param in fusionmodel.named_parameters():
+                    if param.grad is not None:
+                        grad_mean = param.grad.mean().item()
+                        grad_std = param.grad.std().item()
+                        grad_max = param.grad.abs().max().item()
+                        f.write(f"{name:<50} | mean={grad_mean:.6e}, std={grad_std:.6e}, max={grad_max:.6e}\n")
+                    else:
+                        f.write(f"{name:<50} | grad=None\n")
+            """
+
             optimizer.step()
 
             ed = time.time()
@@ -160,7 +176,10 @@ def train_fusion(num=0, logger=None, args=None):
                 logger.info(msg)
                 st = ed
 
-    fusion_model_file = os.path.join(modelpth, 'fusion_model.pth')
+        # 🔹 每个 epoch 结束时更新学习率
+        scheduler.step()
+
+    fusion_model_file = os.path.join(modelpth, 'crossmamba(22422422none)(conv)updata8_2025-9-16.pth')
     torch.save(fusionmodel.state_dict(), fusion_model_file)
     logger.info("Fusion Model Save to: {}".format(fusion_model_file))
     logger.info('\n')
@@ -169,11 +188,11 @@ def train_fusion(num=0, logger=None, args=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train with pytorch')
     parser.add_argument('--model_name', '-M', type=str, default='VFEFM')
-    parser.add_argument('--batch_size', '-B', type=int, default=2)
+    parser.add_argument('--batch_size', '-B', type=int, default=1) # 2
     parser.add_argument('--gpu', '-G', type=int, default=0)
     parser.add_argument('--num_workers', '-j', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--lr', type=float, default=2e-4)
+    parser.add_argument('--lr', type=float, default=1e-4)
     args = parser.parse_args()
 
     torch.cuda.set_device(args.gpu)
